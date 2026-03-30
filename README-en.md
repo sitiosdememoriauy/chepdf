@@ -29,7 +29,7 @@ If you want to run the program from its source code or contribute to its develop
 1. **Clone the repository:**
    ```bash
    git clone https://github.com/sitiosdememoriauy/chepdf.git
-   cd che-pdf
+   cd chepdf
    ```
 
 2. **Create and activate a virtual environment:**
