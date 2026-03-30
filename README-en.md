@@ -75,7 +75,7 @@ flet pack app.py --name "Che PDF" --icon "_internal/assets/icono_che.ico" --add-
 4. **Search:** Enter your term in the top bar. If there are too many results, the system will ask you to refine the filters.
 5. **Reading:** Click on any result to open the original PDF on the exact page.
 
-## 🤝 <img src="https://upload.wikimedia.org/wikipedia/commons/f/fe/Flag_of_Uruguay.svg" height="20"> Support the Project
+## 🤝 <img src="http://sitiosdememoria.uy/sites/default/files/inline-images/Flag_of_Uruguay.svg" height="20"> Support the Project
 
 **Che PDF** is and will always be a free and open-source tool. Your voluntary contribution helps us maintain our infrastructure, develop new tools, and continue with our research work.
 
