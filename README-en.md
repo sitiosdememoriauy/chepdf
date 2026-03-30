@@ -57,15 +57,21 @@ If you want to run the program from its source code or contribute to its develop
    python app.py
    ```
 
-## 📦 Compilation (Create a .exe Executable)
+## 📦 Compilation
 
-To distribute the program to Windows end users without them needing to install Python, you can compile it using the Flet packager. Run the following command in the root of the project:
+To distribute the program to end users without them needing to install Python, you can compile it using the Flet packager. Run the following command in the root of the project:
 
+**Windows:**
 ```bash
 flet pack app.py --name "Che PDF" --icon "_internal/assets/icono_che.ico" --add-data "_internal/assets;_internal/assets"
 ```
 
-*This will generate a `dist` folder containing the final executable and the resources folder. You can compress this folder into a `.zip` file for distribution.*
+**Linux:**
+```bash
+flet pack app.py --name "che-pdf" --icon "_internal/assets/icono_che.png" --add-data "_internal/assets:_internal/assets"
+```
+
+*This will generate a `dist` folder containing the final executable and the resources folder. You can compress this folder into a `.zip` or a `.tar.gz` file for distribution.*
 
 ## 📖 Basic Usage Guide
 
