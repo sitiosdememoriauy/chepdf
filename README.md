@@ -72,7 +72,7 @@ Esto generará una carpeta dist que contiene el ejecutable final y la carpeta de
 4. Búsqueda: Ingresa tu término en la barra superior. Si hay un exceso de resultados, el sistema te pedirá afinar los filtros.
 5. Lectura: Haz clic en cualquier resultado para abrir el PDF original en la página exacta.
 
-## 🤝 Apoya el Proyecto
+## 🤝 <img src="http://sitiosdememoria.uy/sites/default/files/inline-images/Flag_of_Uruguay.svg" height="20"> Apoya el Proyecto
 
 Che PDF es y siempre será una herramienta de software libre y gratuita. Tu aporte voluntario nos ayuda a mantener nuestra infraestructura, desarrollar nuevas herramientas y continuar con el trabajo de investigación.
 
