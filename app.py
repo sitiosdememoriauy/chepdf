@@ -8,28 +8,71 @@ import pathlib
 import tempfile
 import urllib.parse
 import json
+import locale
 
 CONFIG_FILE = os.path.join(motor_sqlite.BASE_DIR, "config.json")
 
+def obtener_idioma_sistema():
+    try:
+        idioma_local, _ = locale.getlocale()
+        
+        if idioma_local is None:
+            idioma_local = os.environ.get('LANG', os.environ.get('LANGUAGE', ''))
+            
+        if idioma_local and idioma_local.lower().startswith('es'):
+            return 'es'
+        return 'en'
+    except Exception:
+        return 'es'
+
 def cargar_config():
+    config_default = {
+        "metodo_anio": "nombre_archivo", 
+        "limite_resultados": 10000,
+        "idioma": obtener_idioma_sistema(),
+        "carpetas_base": []
+    }
+    
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, 'r', encoding='utf-8') as f: 
-                return json.load(f)
+                config_guardada = json.load(f)
+                config_default.update(config_guardada)
+                return config_default
         except Exception: 
             pass
-    # Límite por defecto
-    return {"metodo_anio": "nombre_archivo", "limite_resultados": 10000}
+            
+    return config_default
 
 def guardar_config(config):
     with open(CONFIG_FILE, 'w', encoding='utf-8') as f: 
         json.dump(config, f)
 
+def cargar_idioma(codigo_idioma):
+    ruta_locale = os.path.join(motor_sqlite.BASE_DIR, "locales", f"{codigo_idioma}.json")
+    try:
+        with open(ruta_locale, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+
 def main(page: ft.Page):
-    page.title = "Che PDF"
+    config_app = cargar_config()
+    
+    # 1. Cargar el diccionario correspondiente
+    diccionario_textos = cargar_idioma(config_app.get("idioma", "es"))
+
+    # 2. Definir la función traductora
+    def t(clave):
+        
+        return diccionario_textos.get(clave, clave)
+
+    page.title = t("app_titulo")
     page.window.icon = "icono_che.ico" 
     page.theme_mode = "dark"
     page.padding = 10 
+    
+    txt_estado_indexacion = ft.Text(t("estado_reposo"), italic=True, color="blue300", size=13)
 
     config_app = cargar_config()
 
@@ -45,7 +88,7 @@ def main(page: ft.Page):
     }
 
     # --- CONTROLES DE ESTADO INDEPENDIENTES ---
-    txt_estado_indexacion = ft.Text("Sistema en reposo.", italic=True, color="blue300", size=13)
+    txt_estado_indexacion = ft.Text(t("estado_reposo"), italic=True, color="blue300", size=13)
     txt_estado_busqueda = ft.Text("", italic=True, color="grey400", size=13)
 
     # --- 1. CONTROLES DEL PANEL LATERAL (FILTROS) ---
@@ -132,6 +175,15 @@ def main(page: ft.Page):
 
     def on_carpeta_seleccionada(e: ft.FilePickerResultEvent):
         if e.path:
+            # --- GUARDAR CARPETA BASE EN CONFIG ---
+            ruta_abs = os.path.abspath(e.path)
+            if "carpetas_base" not in config_app:
+                config_app["carpetas_base"] = []
+            if ruta_abs not in config_app["carpetas_base"]:
+                config_app["carpetas_base"].append(ruta_abs)
+                guardar_config(config_app)
+            # --------------------------------
+
             def tarea_indexar():
                 nombre_carpeta = os.path.basename(e.path)
                 txt_estado_indexacion.value = f"Calculando el total de archivos en la carpeta '{nombre_carpeta}'..."
@@ -143,13 +195,25 @@ def main(page: ft.Page):
                 btn_detener.icon_color = "red400"        
                 page.update()
                 
-                def actualizar_interfaz(actual, total, ruta_carpeta_relativa, anio_doc=None):
+                # Agregamos los dos nuevos parámetros con valores por defecto
+                def actualizar_interfaz(actual, total, ruta_carpeta_relativa, anio_doc=None, carpeta_terminada=False, total_carpeta=0):
+                    
+                    if carpeta_terminada:
+                        for cb in lista_checkboxes.controls:
+                            if cb.data == ruta_carpeta_relativa:
+                                texto_mostrar = ruta_carpeta_relativa if estado_app["mostrar_rutas"] else os.path.basename(ruta_carpeta_relativa.rstrip(os.sep))
+                                # Cambiamos el texto para mostrar el número final
+                                cb.label = f"{texto_mostrar} ({total_carpeta})"
+                                page.update()
+                                break
+
                     txt_estado_indexacion.value = f"Indexando '{os.path.basename(ruta_carpeta_relativa)}': Archivo {actual} de {total}"
                     
                     carpetas_ui = [cb.data for cb in lista_checkboxes.controls]
                     if ruta_carpeta_relativa and ruta_carpeta_relativa not in carpetas_ui:
                         texto_mostrar = ruta_carpeta_relativa if estado_app["mostrar_rutas"] else os.path.basename(ruta_carpeta_relativa.rstrip(os.sep))
-                        lista_checkboxes.controls.append(ft.Checkbox(label=f"{texto_mostrar} (...)", value=True, data=ruta_carpeta_relativa, tooltip=ruta_carpeta_relativa))
+                        # Mejoramos el mensaje para que sea evidente que está trabajando
+                        lista_checkboxes.controls.append(ft.Checkbox(label=f"{texto_mostrar} (Indexando...)", value=True, data=ruta_carpeta_relativa, tooltip=ruta_carpeta_relativa))
                         lista_checkboxes.controls.sort(key=lambda x: x.data.lower())
                     
                     if anio_doc and anio_doc != "Desconocido":
@@ -185,6 +249,12 @@ def main(page: ft.Page):
                         page.update()
                 
                 motor_sqlite.indexar_documentos(e.path, metodo_anio=config_app.get("metodo_anio", "nombre_archivo"), callback_progreso=actualizar_interfaz)
+                
+                if motor_sqlite.detener_indexacion:
+                    txt_estado_indexacion.value = "Deteniendo... Actualizando interfaz visual."
+                    page.update()
+                
+                actualizar_filtros_ui() # <-- Primero actualizamos
                 
                 if motor_sqlite.detener_indexacion:
                     txt_estado_indexacion.value = "Indexación abortada por el usuario. Progreso guardado."
@@ -494,19 +564,17 @@ def main(page: ft.Page):
     contenedor_principal = ft.Row([barra_lateral, divisor_movil, area_busqueda], expand=True)
 
     # --- PESTAÑA DE CONFIGURACIÓN ---
-    def guardar_configuracion(e):
-        config_app["metodo_anio"] = radio_metodo_anio.value
-
-        try:
-            config_app["limite_resultados"] = int(txt_limite.value)
-        except ValueError:
-            config_app["limite_resultados"] = 10000
-            txt_limite.value = "10000"
-            
-        guardar_config(config_app)
-        txt_feedback_config.value = "Configuración guardada exitosamente."
-        txt_feedback_config.color = "green400"
-        page.update()
+    
+    # 1. PRIMERO definimos los controles visuales (para que las funciones los puedan leer)
+    dropdown_idioma = ft.Dropdown(
+        label=t("lbl_idioma"),
+        value=config_app.get("idioma", "es"),
+        options=[
+            ft.dropdown.Option("es", t("lbl_espanol")),
+            ft.dropdown.Option("en", t("lbl_ingles"))
+        ],
+        width=300
+    )
 
     radio_metodo_anio = ft.RadioGroup(
         value=config_app.get("metodo_anio", "nombre_archivo"),
@@ -525,12 +593,34 @@ def main(page: ft.Page):
     )
     
     txt_feedback_config = ft.Text(color="transparent")
+
+    # 2. DESPUÉS definimos la función que guarda los datos (ahora sí sabe qué es dropdown_idioma)
+    def guardar_configuracion(e):
+        config_app["metodo_anio"] = radio_metodo_anio.value
+        config_app["idioma"] = dropdown_idioma.value
+
+        try:
+            config_app["limite_resultados"] = int(txt_limite.value)
+        except ValueError:
+            config_app["limite_resultados"] = 10000
+            txt_limite.value = "10000"
+            
+        guardar_config(config_app)
+        
+        txt_feedback_config.value = t("msj_config_guardada")
+        txt_feedback_config.color = "orange400"
+        page.update()
+
+    # 3. LUEGO creamos el botón que llama a la función
     btn_guardar_config = ft.ElevatedButton("Guardar Configuración", icon="save", on_click=guardar_configuracion)
 
+    # 4. FINALMENTE ensamblamos todo en el contenedor visual
     contenedor_configuracion = ft.Container(
         padding=20,
         content=ft.Column([
             ft.Text("Configuración del Motor", size=20, weight="bold"),
+            dropdown_idioma,
+            ft.Divider(),
             ft.Text("Selecciona cómo quieres que el motor deduzca el año histórico al indexar.", color="grey400"),
             radio_metodo_anio,
             ft.Divider(),
