@@ -1,0 +1,9 @@
+{
+  "app_titulo": "Che PDF",
+  "estado_reposo": "System idle.",
+  "filtro_temporal": "Time Filter",
+  "lbl_idioma": "Interface Language",
+  "lbl_espanol": "Spanish",
+  "lbl_ingles": "English",
+  "msj_config_guardada": "Configuration saved. Please restart the application to apply language changes."
+}
