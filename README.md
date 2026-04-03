@@ -41,7 +41,7 @@ Si deseas ejecutar el programa desde su código fuente o contribuir a su desarro
    .venv\Scripts\activate
    ```
 
-**En Linux/Mac:**
+**En Linux:**
    ```bash
    source .venv/bin/activate
    ```
