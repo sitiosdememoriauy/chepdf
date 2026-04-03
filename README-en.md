@@ -61,14 +61,9 @@ If you want to run the program from its source code or contribute to its develop
 
 To distribute the program to end users without them needing to install Python, you can compile it using the Flet packager. Run the following command in the root of the project:
 
-**Windows:**
+**Windows/Linux:**
 ```bash
-flet pack app.py --name "Che PDF" --icon "_internal/assets/icono_che.ico" --add-data "_internal/assets;_internal/assets"
-```
-
-**Linux:**
-```bash
-flet pack app.py --name "che-pdf" --icon "_internal/assets/icono_che.png" --add-data "_internal/assets:_internal/assets"
+python compilar.py
 ```
 
 *This will generate a `dist` folder containing the final executable and the resources folder. You can compress this folder into a `.zip` or a `.tar.gz` file for distribution.*
