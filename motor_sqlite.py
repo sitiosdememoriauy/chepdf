@@ -20,7 +20,6 @@ else:
 INDICES_DIR = os.path.join(BASE_DIR, "indices")
 os.makedirs(INDICES_DIR, exist_ok=True)
 
-MAX_DB_SIZE = 100 * 1024 * 1024 
 detener_indexacion = False
 
 def obtener_ruta_relativa(ruta_absoluta):
@@ -178,10 +177,12 @@ def borrar_indice_carpeta(ruta_carpeta):
         return True
     except Exception as e: return str(e)
 
-def indexar_documentos(carpeta_pdfs, metodo_anio="nombre_archivo", callback_progreso=None):
+def indexar_documentos(carpeta_pdfs, metodo_anio="nombre_archivo", tamanio_max_mb=1024, callback_progreso=None):
     global detener_indexacion
     detener_indexacion = False 
     archivo_errores = os.path.join(BASE_DIR, "errores_indexacion.txt")
+    
+    max_db_size_bytes = tamanio_max_mb * 1024 * 1024 
     
     ruta_raiz_relativa = obtener_ruta_relativa(os.path.abspath(carpeta_pdfs))
 
@@ -333,7 +334,7 @@ def indexar_documentos(carpeta_pdfs, metodo_anio="nombre_archivo", callback_prog
                 
                 if archivos_nuevos_en_lote % lote_size == 0:
                     conexion.commit()
-                    if os.path.getsize(current_db_path) >= MAX_DB_SIZE:
+                    if os.path.getsize(current_db_path) >= max_db_size_bytes: # <-- AHORA USA LA NUEVA VARIABLE
                         conexion.execute("INSERT INTO documentos(documentos) VALUES('optimize');")
                         conexion.commit()
                         conexion.close()

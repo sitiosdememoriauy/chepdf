@@ -28,8 +28,8 @@ Si deseas ejecutar el programa desde su código fuente o contribuir a su desarro
 
 1. **Clona el repositorio:**
    ```bash
-   git clone https://github.com/sitiosdememoriauy/chepdf.git
-   cd chepdf
+   git clone [https://github.com/tu_usuario/che-pdf.git](https://github.com/tu_usuario/che-pdf.git)
+   cd che-pdf
    ```
 
 2. **Crea y activa un entorno virtual:**
@@ -57,19 +57,10 @@ Si deseas ejecutar el programa desde su código fuente o contribuir a su desarro
    python app.py
    ```
 
-## 📦 Compilación
+## 📦 Compilación (Crear un Ejecutable .exe)
 
-Para distribuir el programa a usuarios finales de sin que necesiten instalar Python, puedes compilarlo usando el empaquetador de Flet. Ejecuta el siguiente comando en la raíz del proyecto:
-
-**En Windows:**
-```bash
+Para distribuir el programa a usuarios finales de Windows sin que necesiten instalar Python, puedes compilarlo usando el empaquetador de Flet. Ejecuta el siguiente comando en la raíz del proyecto:
 flet pack app.py --name "Che PDF" --icon "_internal/assets/icono_che.ico" --add-data "_internal/assets;_internal/assets"
-```
-
-**En Linux:**
-```bash
-flet pack app.py --name "che-pdf" --icon "_internal/assets/icono_che.png" --add-data "_internal/assets:_internal/assets"
-```
 
 Esto generará una carpeta dist que contiene el ejecutable final y la carpeta de recursos. Puedes comprimir esa carpeta en un archivo .zip para distribuirla.
 
@@ -81,7 +72,7 @@ Esto generará una carpeta dist que contiene el ejecutable final y la carpeta de
 4. Búsqueda: Ingresa tu término en la barra superior. Si hay un exceso de resultados, el sistema te pedirá afinar los filtros.
 5. Lectura: Haz clic en cualquier resultado para abrir el PDF original en la página exacta.
 
-## 🤝 <img src="http://sitiosdememoria.uy/sites/default/files/inline-images/Flag_of_Uruguay.svg" height="20"> Apoya el Proyecto
+## 🤝 Apoya el Proyecto
 
 Che PDF es y siempre será una herramienta de software libre y gratuita. Tu aporte voluntario nos ayuda a mantener nuestra infraestructura, desarrollar nuevas herramientas y continuar con el trabajo de investigación.
 
@@ -96,3 +87,15 @@ Proyecto impulsado por sitiosdememoria.uy.
 ## 📄 Licencia
 
 Este proyecto está bajo la Licencia GNU GPLv3. Eres libre de usar, estudiar, compartir y modificar este software para cualquier propósito, siempre y cuando las obras derivadas mantengan la misma licencia abierta.
+
+## Historial de Versiones
+
+### v1.1 (Abril 2026)
+* **Soporte Multilenguaje:** Interfaz disponible en Español e Inglés (configurable).
+* **Limpieza inteligente:** Detección automática y eliminación de archivos "fantasma" (eliminados del disco) al re-indexar.
+* **Optimización Extrema FTS5:** Búsquedas masivas instantáneas gracias al límite inyectado en el motor de conteo.
+* **Consolidación Estructural:** Nueva arquitectura de base de datos única por carpeta raíz, previniendo bloqueos y reduciendo el uso del disco.
+* **Panel Detallado:** Desglose exacto de cantidad de PDFs por subcarpeta en el panel izquierdo.
+
+### v1.0 (Marzo 2026)
+* Versión inicial del proyecto.
