@@ -49,6 +49,7 @@ Si deseas ejecutar el programa desde su código fuente o contribuir a su desarro
 
 3. **Instala las dependencias:**
    ```bash
+   cd chepdf
    pip install -r requirements.txt
    ```
 
