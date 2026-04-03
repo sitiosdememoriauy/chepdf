@@ -28,7 +28,7 @@ Si deseas ejecutar el programa desde su código fuente o contribuir a su desarro
 
 1. **Clona el repositorio:**
    ```bash
-   git clone [https://github.com/tu_usuario/che-pdf.git](https://github.com/tu_usuario/che-pdf.git)
+   git clone https://github.com/sitiosdememoriauy/chepdf/
    cd che-pdf
    ```
 
