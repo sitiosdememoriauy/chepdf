@@ -28,8 +28,7 @@ If you want to run the program from its source code or contribute to its develop
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/sitiosdememoriauy/chepdf.git
-   cd chepdf
+   git clone https://github.com/sitiosdememoriauy/chepdf
    ```
 
 2. **Create and activate a virtual environment:**
@@ -49,7 +48,8 @@ If you want to run the program from its source code or contribute to its develop
 
 3. **Install the dependencies:**
    ```bash
-   pip install flet==0.28.3 PyMuPDF
+   cd chepdf
+   pip install -r requirements.txt
    ```
 
 4. **Run the application:**
@@ -96,3 +96,15 @@ If you find the tool useful, please consider making a solidarity contribution:
 ## 📄 License
 
 This project is licensed under the **GNU GPLv3** License. You are free to use, study, share, and modify this software for any purpose, as long as derivative works maintain the same open license.
+
+## Version History
+
+### v1.1 (April 2026)
+* **Multi-language Support:** Interface available in Spanish and English (configurable).
+* **Smart Cleanup:** Automatic detection and removal of "ghost" files (deleted from disk) upon re-indexing.
+* **Extreme FTS5 Optimization:** Instant massive searches thanks to the limit injected into the counting engine.
+* **Structural Consolidation:** New unique database architecture per root folder, preventing locks and reducing disk usage.
+* **Detailed Panel:** Exact breakdown of PDF count per subfolder in the left panel.
+
+### v1.0 (March 2026)
+* Initial release of the project.
