@@ -49,7 +49,7 @@ Si deseas ejecutar el programa desde su código fuente o contribuir a su desarro
 
 3. **Instala las dependencias:**
    ```bash
-   pip install flet==0.28.3 PyMuPDF
+   pip install -r requirements.txt
    ```
 
 4. **Ejecuta la aplicación:**
@@ -57,12 +57,12 @@ Si deseas ejecutar el programa desde su código fuente o contribuir a su desarro
    python app.py
    ```
 
-## 📦 Compilación (Crear un Ejecutable .exe)
+## 📦 Compilación
 
-Para distribuir el programa a usuarios finales de Windows sin que necesiten instalar Python, puedes compilarlo usando el empaquetador de Flet. Ejecuta el siguiente comando en la raíz del proyecto:
-flet pack app.py --name "Che PDF" --icon "_internal/assets/icono_che.ico" --add-data "_internal/assets;_internal/assets"
+Para distribuir el programa a usuarios finales de Windows o Linux sin que necesiten instalar Python, puedes compilarlo usando el empaquetador de Flet. Ejecuta el siguiente comando en la raíz del proyecto:
+python compilar.py
 
-Esto generará una carpeta dist que contiene el ejecutable final y la carpeta de recursos. Puedes comprimir esa carpeta en un archivo .zip para distribuirla.
+Esto generará una carpeta dist que contiene el ejecutable final y la carpeta de recursos. Puedes comprimir esa carpeta en un archivo .zip o .tar.gz para distribuirla.
 
 ## 📖 Guía de Uso Básica
 
