@@ -90,6 +90,14 @@ Este proyecto está bajo la Licencia GNU GPLv3. Eres libre de usar, estudiar, co
 
 ## Historial de Versiones
 
+### v1.2 (Abril 2026)
+* **Motor de Búsqueda Dual:**  Opción configurable para alternar entre "Modo Precisión" (ranking algorítmico FTS5) y "Modo Velocidad" (extracción secuencial instantánea).
+* **Exploración Continua:**  Nuevo sistema de paginación por scroll (algoritmo Límite + 1) en modo rápido, permitiendo cargar resultados infinitos sin saturar la memoria RAM.
+* **Enrutamiento Inteligente en RAM:**  Creación del mapa maestro JSON con radar Min-Max, que filtra matemáticamente las bases de datos irrelevantes antes de tocar el disco duro.
+* **Auto-Sincronización del Índice:**  Reconstrucción automática del mapa de carpetas leyendo directamente los metadatos de SQLite, blindando el sistema contra archivos borrados manualmente.
+* **Prevención de Cuelgues FTS5:**  El "Modo Velocidad" evade el planificador interno de SQLite omitiendo consultas de conteo masivas, previniendo bloqueos con palabras muy comunes o comodines abiertos.
+* **Refactorización Visual (Flet):**  Implementación de ruptura de caché por frames asíncronos para garantizar traducciones al vuelo instantáneas en todos los menús desplegables.
+
 ### v1.1 (Abril 2026)
 * **Soporte Multilenguaje:** Interfaz disponible en Español e Inglés (configurable).
 * **Limpieza inteligente:** Detección automática y eliminación de archivos "fantasma" (eliminados del disco) al re-indexar.
