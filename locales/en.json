@@ -80,7 +80,7 @@
   "opt_metodo_metadatos": "Extract from internal PDF metadata (creationDate)",
   "lbl_rendimiento_busqueda": "Search Performance",
   "desc_config_limite": "Set the maximum limit of results before the system asks you to refine the search. This prevents excessive load times in massive repositories.",
-  "lbl_limite_maximo": "Maximum limit of results per search",
+  "lbl_limite_maximo": "Limit of results",
   "lbl_tamanio_db": "Maximum index file size",
   "desc_tamanio_db": "Larger files speed up searches. Smaller files are easier to backup to the cloud.",
   "opt_500mb": "500 MB (Low-end devices / Cloud)",
@@ -89,6 +89,9 @@
   "opt_4gb": "4 GB (Maximum performance)",
   "btn_guardar_config": "Save Settings",
   
+  "opt_modo_relevancia": "Sort by relevance (slow)",
+  "opt_modo_rapido": "Continuous loading by index order (fast)",
+
   "help_titulo": "Che PDF User Guide",
   "help_desc": "Che PDF allows you to efficiently index and search text within historical PDF documents, even in large-volume repositories.",
   "help_pasos_titulo": "Step by Step: Basic Guide",
