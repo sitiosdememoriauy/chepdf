@@ -94,6 +94,14 @@ This project is licensed under the **GNU GPLv3** License. You are free to use, s
 
 ## Version History
 
+### v1.2 (April 2026)
+* **Dual Search Engine:** Configurable option to toggle between "Precision Mode" (FTS5 algorithmic ranking) and "Speed Mode" (instant sequential extraction).
+* **Continuous Exploration:** New scroll-based pagination system (Limit + 1 algorithm) in fast mode, allowing infinite loading of results without saturating RAM.
+* **Smart RAM Routing:** Creation of a JSON master map with a Min-Max radar, mathematically filtering out irrelevant databases before touching the hard drive.
+* **Index Auto-Synchronization:** Automatic reconstruction of the folder map by directly reading SQLite metadata, bulletproofing the system against manually deleted files.
+* **FTS5 Freeze Prevention:** "Speed Mode" bypasses the internal SQLite query planner by omitting massive count queries, preventing lockups caused by highly common words or open wildcards.
+* **Visual Refactoring (Flet):** Implementation of asynchronous frame cache-breaking to guarantee instant on-the-fly translations across all dropdown menus.
+
 ### v1.1 (April 2026)
 * **Multi-language Support:** Interface available in Spanish and English (configurable).
 * **Smart Cleanup:** Automatic detection and removal of "ghost" files (deleted from disk) upon re-indexing.
