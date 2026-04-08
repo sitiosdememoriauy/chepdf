@@ -57,6 +57,7 @@ Si deseas ejecutar el programa desde su código fuente o contribuir a su desarro
    ```bash
    python app.py
    ```
+   
    **En Linux:**
    ```bash
    python3 app.py
@@ -65,7 +66,16 @@ Si deseas ejecutar el programa desde su código fuente o contribuir a su desarro
 ## 📦 Compilación
 
 Para distribuir el programa a usuarios finales de Windows o Linux sin que necesiten instalar Python, puedes compilarlo usando el empaquetador de Flet. Ejecuta el siguiente comando en la raíz del proyecto:
-python compilar.py
+
+   **En Windows:**
+   ```bash
+   python compilar.py
+   ```
+
+   **En Linux:**
+   ```bash
+   python3 compilar.py
+   ```
 
 Esto generará una carpeta dist que contiene el ejecutable final y la carpeta de recursos. Puedes comprimir esa carpeta en un archivo .zip o .tar.gz para distribuirla.
 
