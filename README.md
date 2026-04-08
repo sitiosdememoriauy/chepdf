@@ -32,17 +32,16 @@ Si deseas ejecutar el programa desde su código fuente o contribuir a su desarro
    ```
 
 2. **Crea y activa un entorno virtual:**
+   
+   **En Windows:**
    ```bash
    python -m venv .venv
-   ```
-
-**En Windows:**
-   ```bash
    .venv\Scripts\activate
    ```
 
-**En Linux:**
+   **En Linux:**
    ```bash
+   python3 -m venv .venv
    source .venv/bin/activate
    ```
 
@@ -53,8 +52,14 @@ Si deseas ejecutar el programa desde su código fuente o contribuir a su desarro
    ```
 
 4. **Ejecuta la aplicación:**
+   
+   **En Windows:**
    ```bash
    python app.py
+   ```
+   **En Linux:**
+   ```bash
+   python3 app.py
    ```
 
 ## 📦 Compilación
