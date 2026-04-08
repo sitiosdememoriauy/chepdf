@@ -32,39 +32,50 @@ If you want to run the program from its source code or contribute to its develop
    ```
 
 2. **Create and activate a virtual environment:**
-   ```bash
-   python -m venv .venv
-   ```
-
+   
    **On Windows:**
    ```bash
+   python -m venv .venv
    .venv\Scripts\activate
    ```
 
    **On Linux:**
    ```bash
+   python3 -m venv .venv
    source .venv/bin/activate
    ```
 
-3. **Install the dependencies:**
+4. **Install the dependencies:**
    ```bash
    cd chepdf
    pip install -r requirements.txt
    ```
 
-4. **Run the application:**
+5. **Run the application:**
+
+   **On Windows:**
    ```bash
    python app.py
+   ```
+
+   **On Linux:**
+   ```bash
+   python3 app.py
    ```
 
 ## 📦 Compilation
 
 To distribute the program to end users without them needing to install Python, you can compile it using the Flet packager. Run the following command in the root of the project:
 
-**Windows/Linux:**
-```bash
-python compilar.py
-```
+  **On Windows:**
+  ```bash
+  python compilar.py
+  ```
+
+  **On Linux:**
+  ```bash
+  python3 compilar.py
+  ```
 
 *This will generate a `dist` folder containing the final executable and the resources folder. You can compress this folder into a `.zip` or a `.tar.gz` file for distribution.*
 
