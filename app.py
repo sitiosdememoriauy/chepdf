@@ -1,4 +1,4 @@
-VERSION = "1.1"
+VERSION = "1.2"
 
 import flet as ft
 import motor_sqlite
@@ -11,6 +11,7 @@ import tempfile
 import urllib.parse
 import json
 import locale
+import time
 
 CONFIG_FILE = os.path.join(motor_sqlite.BASE_DIR, "config.json")
 
@@ -30,9 +31,10 @@ def obtener_idioma_sistema():
 def cargar_config():
     config_default = {
         "metodo_anio": "nombre_archivo", 
-        "limite_resultados": 10000,
+        "limite_resultados": 1000,
         "idioma": obtener_idioma_sistema(),
-        "tamanio_max_db": 1024
+        "tamanio_max_db": 2048,
+        "modo_busqueda": "rapida"
     }
     
     if os.path.exists(CONFIG_FILE):
@@ -73,8 +75,6 @@ def main(page: ft.Page):
     page.theme_mode = "dark"
     page.padding = 10 
     
-    config_app = cargar_config()
-
     estado_busqueda = {
         "pagina_actual": 1,
         "resultados_por_pagina": 50,
@@ -110,7 +110,7 @@ def main(page: ft.Page):
         inactive_color="grey800"
     )
     
-    check_desconocidos = ft.Checkbox(label=t("lbl_incluir_sin_ano"), value=True, disabled=True)
+    check_desconocidos = ft.Checkbox(label=t("lbl_incluir_sin_ano"), value=False, disabled=True)
 
     def actualizar_filtros_ui():
         estado_previo = {cb.data: cb.value for cb in lista_checkboxes.controls}
@@ -298,6 +298,7 @@ def main(page: ft.Page):
             actualizar_filtros_ui() 
             lista_resultados.controls.clear()
             fila_paginador.visible = False
+            contenedor_cargar_mas.visible = False
         else:
             txt_estado_indexacion.value = t("msg_error_borrado").format(resultado)
         page.update()
@@ -360,7 +361,6 @@ def main(page: ft.Page):
         actualizar_filtros_ui()
     btn_alternar_vista = ft.IconButton(icon="visibility_off", tooltip=t("tooltip_mostrar_rutas"), on_click=alternar_vista_rutas)
 
-    # Variables de texto para traduccion al vuelo
     txt_lbl_indexar_carpetas = ft.Text(t("lbl_indexar_carpetas"), weight="bold", size=16)
     txt_lbl_filtro_carpetas = ft.Text(t("lbl_filtro_carpetas"), weight="bold", size=16)
     btn_todas = ft.TextButton(t("btn_todas"), on_click=seleccionar_todas)
@@ -411,6 +411,14 @@ def main(page: ft.Page):
     txt_paginacion = ft.Text(t("lbl_pagina_1_de_1"), weight="bold")
     fila_paginador = ft.Row(controls=[btn_anterior, txt_paginacion, btn_siguiente], alignment="center", visible=False)
 
+    btn_cargar_mas = ft.ElevatedButton(
+        t("btn_cargar_mas") if "btn_cargar_mas" in diccionario_textos else "Cargar más resultados...", 
+        icon="downloading", 
+        on_click=lambda e: cambiar_pagina(1),
+        style=ft.ButtonStyle(bgcolor="blue800", color="white")
+    )
+    contenedor_cargar_mas = ft.Row([btn_cargar_mas], alignment="center", visible=False)
+
     def abrir_pdf(ruta_guardada, pagina, termino_busqueda=""):
         if not os.path.isabs(ruta_guardada):
             ruta_real = os.path.join(motor_sqlite.BASE_DIR, ruta_guardada)
@@ -449,11 +457,18 @@ def main(page: ft.Page):
     def ejecutar_busqueda(nueva_busqueda=True):
         consulta = txt_busqueda.value
         if not consulta: return
-        if nueva_busqueda: estado_busqueda["pagina_actual"] = 1
+
+        modo_actual = config_app.get("modo_busqueda", "relevancia")
+
+        if nueva_busqueda: 
+            estado_busqueda["pagina_actual"] = 1
             
-        lista_resultados.controls.clear()
+        if nueva_busqueda or modo_actual == "relevancia":
+            lista_resultados.controls.clear()
+            
         txt_estado_busqueda.value = t("msg_calculando_resultados")
         fila_paginador.visible = False
+        contenedor_cargar_mas.visible = False
         page.update()
 
         carpetas_seleccionadas = [cb.data for cb in lista_checkboxes.controls if cb.value]
@@ -478,7 +493,8 @@ def main(page: ft.Page):
             anio_min=anio_min,
             anio_max=anio_max,
             incluir_desconocidos=incluir_desc,
-            limite_maximo=limite_max
+            limite_maximo=limite_max,
+            modo_busqueda=modo_actual
         )
 
         if "error" in respuesta:
@@ -500,12 +516,21 @@ def main(page: ft.Page):
         else:
             txt_estado_busqueda.color = "grey400"
             estado_busqueda["total_paginas"] = math.ceil(total_hits / estado_busqueda["resultados_por_pagina"])
-            txt_estado_busqueda.value = t("msg_busqueda_exito").format(total_hits, estado_busqueda['pagina_actual'])
-            txt_paginacion.value = t("lbl_paginacion").format(estado_busqueda['pagina_actual'], estado_busqueda['total_paginas'])
             
-            btn_anterior.disabled = (estado_busqueda["pagina_actual"] == 1)
-            btn_siguiente.disabled = (estado_busqueda["pagina_actual"] >= estado_busqueda["total_paginas"])
-            fila_paginador.visible = True
+            if modo_actual == "relevancia":
+                txt_estado_busqueda.value = t("msg_busqueda_exito").format(total_hits, estado_busqueda['pagina_actual'])
+                txt_paginacion.value = t("lbl_paginacion").format(estado_busqueda['pagina_actual'], estado_busqueda['total_paginas'])
+                btn_anterior.disabled = (estado_busqueda["pagina_actual"] == 1)
+                btn_siguiente.disabled = (estado_busqueda["pagina_actual"] >= estado_busqueda["total_paginas"])
+                fila_paginador.visible = True
+            else:
+                resultados_cargados = len(lista_resultados.controls) + len(respuesta["resultados"])
+                txt_estado_busqueda.value = f"Mostrando {resultados_cargados} resultados (Carga rápida)"
+                
+                if respuesta["total"] > (offset_actual + estado_busqueda["resultados_por_pagina"]):
+                    contenedor_cargar_mas.visible = True
+                else:
+                    contenedor_cargar_mas.visible = False
             
             for res in respuesta["resultados"]:
                 fragmentos = re.split(r'(<b>.*?</b>)', f"...{res['extracto']}...")
@@ -539,7 +564,8 @@ def main(page: ft.Page):
         panel_estado_sistema,
         txt_estado_busqueda,
         lista_resultados,
-        fila_paginador
+        fila_paginador,
+        contenedor_cargar_mas
     ], expand=True)
 
     # --- 6. PESTAÑAS Y CONTENEDORES PRINCIPALES ---
@@ -563,7 +589,6 @@ def main(page: ft.Page):
     contenedor_principal = ft.Row([barra_lateral, divisor_movil, area_busqueda], expand=True)
 
     # --- PESTAÑA DE CONFIGURACIÓN ---
-    
     dropdown_idioma = ft.Dropdown(
         label=t("lbl_idioma"),
         value=config_app.get("idioma", "es"),
@@ -583,9 +608,38 @@ def main(page: ft.Page):
         ])
     )
     
+    txt_lbl_modo_busqueda = ft.Text(t("lbl_modo_busqueda") if "lbl_modo_busqueda" in diccionario_textos else "Modo de Búsqueda", weight="bold", size=18)
+    
+    txt_limite = ft.TextField(
+        label=t("lbl_limite_maximo"),
+        value=str(config_app.get("limite_resultados", 10000)),
+        width=150,
+        height=40,
+        text_size=13,
+        content_padding=10,
+        keyboard_type=ft.KeyboardType.NUMBER
+    )
+    txt_limite.visible = config_app.get("modo_busqueda", "relevancia") == "relevancia"
+    
+    def al_cambiar_modo(e):
+        txt_limite.visible = (radio_modo_busqueda.value == "relevancia")
+        page.update()
+
+    radio_modo_busqueda = ft.RadioGroup(
+        value=config_app.get("modo_busqueda", "relevancia"),
+        on_change=al_cambiar_modo,
+        content=ft.Column([
+            ft.Row([
+                ft.Radio(value="relevancia", label=t("opt_modo_relevancia") if "opt_modo_relevancia" in diccionario_textos else "Precisión: Ordenar por relevancia FTS5"),
+                txt_limite
+            ], alignment=ft.MainAxisAlignment.START),
+            ft.Radio(value="rapida", label=t("opt_modo_rapido") if "opt_modo_rapido" in diccionario_textos else "Velocidad: Carga continua por orden de indexación"),
+        ])
+    )
+    
     dropdown_tamanio_db = ft.Dropdown(
         label=t("lbl_tamanio_db"),
-        value=str(config_app.get("tamanio_max_db", 1024)), 
+        value=str(config_app.get("tamanio_max_db", 2048)), 
         options=[
             ft.dropdown.Option("500", t("opt_500mb")),
             ft.dropdown.Option("1024", t("opt_1gb")),
@@ -594,23 +648,34 @@ def main(page: ft.Page):
         ],
         width=350
     )
-    
-    txt_limite = ft.TextField(
-        label=t("lbl_limite_maximo"),
-        value=str(config_app.get("limite_resultados", 10000)),
-        width=350,
-        keyboard_type=ft.KeyboardType.NUMBER
-    )
-    
-    txt_feedback_config = ft.Text(color="transparent")
 
-    # Variables sueltas para la configuracion
+    # Variables para la configuracion
     txt_lbl_config_motor = ft.Text(t("lbl_config_motor"), size=20, weight="bold")
     txt_desc_config_metodo = ft.Text(t("desc_config_metodo"), color="grey400")
     txt_lbl_rendimiento_busqueda = ft.Text(t("lbl_rendimiento_busqueda"), weight="bold", size=18)
     txt_desc_tamanio_db = ft.Text(t("desc_tamanio_db"), color="grey400")
     txt_desc_config_limite = ft.Text(t("desc_config_limite"), color="grey400")
+    
     btn_guardar_config = ft.ElevatedButton(t("btn_guardar_config"), icon="save")
+
+    contenedor_configuracion = ft.Container(
+        padding=20,
+        content=ft.Column([
+            txt_lbl_config_motor,
+            dropdown_idioma,
+            ft.Divider(),
+            txt_desc_config_metodo,
+            radio_metodo_anio,
+            ft.Divider(),
+            txt_lbl_modo_busqueda,
+            radio_modo_busqueda,
+            ft.Divider(),
+            txt_lbl_rendimiento_busqueda,
+            txt_desc_tamanio_db,
+            dropdown_tamanio_db,
+            ft.Container(height=10)
+        ], scroll=ft.ScrollMode.AUTO)
+    )
 
     # --- LÓGICA DE TRADUCCIÓN AL VUELO ---
     def aplicar_traduccion_al_vuelo():
@@ -634,6 +699,7 @@ def main(page: ft.Page):
         btn_buscar.text = t("btn_buscar")
         btn_anterior.text = t("btn_anterior")
         btn_siguiente.text = t("btn_siguiente")
+        btn_cargar_mas.text = t("btn_cargar_mas") if "btn_cargar_mas" in diccionario_textos else "Cargar más resultados..."
 
         # Dialogo borrar
         dlg_borrar.title.value = t("lbl_gestion_indice")
@@ -644,9 +710,34 @@ def main(page: ft.Page):
 
         # Configuración
         txt_lbl_config_motor.value = t("lbl_config_motor")
+
+        val_idioma = dropdown_idioma.value
+        val_tamanio = dropdown_tamanio_db.value
+        
+        dropdown_idioma.value = None
+        dropdown_tamanio_db.value = None
+        
+        page.update() 
+        
+        time.sleep(0.05)
+
         dropdown_idioma.label = t("lbl_idioma")
-        dropdown_idioma.options[0].text = t("lbl_espanol")
-        dropdown_idioma.options[1].text = t("lbl_ingles")
+        dropdown_idioma.options = [
+            ft.dropdown.Option("es", t("lbl_espanol")),
+            ft.dropdown.Option("en", t("lbl_ingles"))
+        ]
+
+        dropdown_tamanio_db.label = t("lbl_tamanio_db")
+        dropdown_tamanio_db.options = [
+            ft.dropdown.Option("500", t("opt_500mb")),
+            ft.dropdown.Option("1024", t("opt_1gb")),
+            ft.dropdown.Option("2048", t("opt_2gb")),
+            ft.dropdown.Option("4096", t("opt_4gb"))
+        ]
+        
+        dropdown_idioma.value = val_idioma
+        dropdown_tamanio_db.value = val_tamanio
+        # ==========================================================
 
         txt_desc_config_metodo.value = t("desc_config_metodo")
         radio_metodo_anio.content.controls[0].label = t("opt_metodo_nombre")
@@ -655,12 +746,10 @@ def main(page: ft.Page):
 
         txt_lbl_rendimiento_busqueda.value = t("lbl_rendimiento_busqueda")
         txt_desc_tamanio_db.value = t("desc_tamanio_db")
-
-        dropdown_tamanio_db.label = t("lbl_tamanio_db")
-        dropdown_tamanio_db.options[0].text = t("opt_500mb")
-        dropdown_tamanio_db.options[1].text = t("opt_1gb")
-        dropdown_tamanio_db.options[2].text = t("opt_2gb")
-        dropdown_tamanio_db.options[3].text = t("opt_4gb")
+        
+        txt_lbl_modo_busqueda.value = t("lbl_modo_busqueda") if "lbl_modo_busqueda" in diccionario_textos else "Modo de Búsqueda"
+        radio_modo_busqueda.content.controls[0].label = t("opt_modo_relevancia") if "opt_modo_relevancia" in diccionario_textos else "Precisión: Ordenar por relevancia FTS5 (Recomendado)"
+        radio_modo_busqueda.content.controls[1].label = t("opt_modo_rapido") if "opt_modo_rapido" in diccionario_textos else "Velocidad: Carga continua por orden de indexación (Instantáneo)"
 
         txt_desc_config_limite.value = t("desc_config_limite")
         txt_limite.label = t("lbl_limite_maximo")
@@ -678,14 +767,10 @@ def main(page: ft.Page):
         tabs.tabs[3].text = t("tab_acerca_de")
         tabs.tabs[4].text = t("tab_donar")
 
-        # --- NUEVO: Actualizar textos de estado y paginación ---
-        
-        # 1. Actualizamos el estado inferior solo si el motor no está trabajando
         hilo = estado_app["hilo_indexacion"]
         if not hilo or not hilo.is_alive():
             txt_estado_indexacion.value = t("estado_reposo")
             
-        # 2. Actualizamos el texto del paginador de búsqueda
         if estado_busqueda["total_paginas"] == 1:
             txt_paginacion.value = t("lbl_pagina_1_de_1")
         else:
@@ -696,67 +781,15 @@ def main(page: ft.Page):
     def cambiar_idioma_inmediato(e):
         idioma_nuevo = dropdown_idioma.value
         if config_app.get("idioma") != idioma_nuevo:
-            # 1. Actualizamos y guardamos solo el idioma en el config
             config_app["idioma"] = idioma_nuevo
             guardar_config(config_app)
             
-            # 2. Recargamos el diccionario y aplicamos la traducción
             nonlocal diccionario_textos
             diccionario_textos = cargar_idioma(idioma_nuevo)
             aplicar_traduccion_al_vuelo()
             page.update()
 
     dropdown_idioma.on_change = cambiar_idioma_inmediato
-
-    def guardar_configuracion(e):
-        idioma_nuevo = dropdown_idioma.value
-        cambio_idioma = config_app.get("idioma") != idioma_nuevo
-        
-        config_app["metodo_anio"] = radio_metodo_anio.value
-        config_app["idioma"] = idioma_nuevo
-        config_app["tamanio_max_db"] = int(dropdown_tamanio_db.value)
-
-        try:
-            config_app["limite_resultados"] = int(txt_limite.value)
-        except ValueError:
-            config_app["limite_resultados"] = 10000
-            txt_limite.value = "10000"
-            
-        guardar_config(config_app)
-        
-        if cambio_idioma:
-            nonlocal diccionario_textos
-            diccionario_textos = cargar_idioma(idioma_nuevo)
-            aplicar_traduccion_al_vuelo()
-            txt_feedback_config.value = t("msj_config_guardada")
-        else:
-            txt_feedback_config.value = t("msj_config_guardada")
-            
-        txt_feedback_config.color = "orange400"
-        page.update()
-
-    btn_guardar_config.on_click = guardar_configuracion
-
-    contenedor_configuracion = ft.Container(
-        padding=20,
-        content=ft.Column([
-            txt_lbl_config_motor,
-            dropdown_idioma,
-            ft.Divider(),
-            txt_desc_config_metodo,
-            radio_metodo_anio,
-            ft.Divider(),
-            txt_lbl_rendimiento_busqueda,
-            txt_desc_tamanio_db,
-            dropdown_tamanio_db,
-            ft.Container(height=10),
-            txt_desc_config_limite,
-            txt_limite,
-            ft.Container(height=10),
-            btn_guardar_config,
-            txt_feedback_config
-        ], scroll=ft.ScrollMode.AUTO)
-    )
 
     # --- PESTAÑA DE AYUDA (Constructora) ---
     def crear_paso(numero, titulo, descripcion, icono):
@@ -904,16 +937,23 @@ def main(page: ft.Page):
             ])
         )
 
-    def al_cambiar_pestana(e):
-        # Si el texto de feedback tiene algo, lo borramos al cambiar de pestaña
-        if txt_feedback_config.value != "":
-            txt_feedback_config.value = ""
-            page.update()
+    def guardar_config_al_cambiar_pestana(e):
+        # Esta función corre en silencio cada vez que tocás una pestaña superior
+        config_app["metodo_anio"] = radio_metodo_anio.value
+        config_app["tamanio_max_db"] = int(dropdown_tamanio_db.value)
+        config_app["modo_busqueda"] = radio_modo_busqueda.value
+
+        try:
+            config_app["limite_resultados"] = int(txt_limite.value)
+        except ValueError:
+            config_app["limite_resultados"] = 10000
+            
+        guardar_config(config_app)
 
     tabs = ft.Tabs(
         selected_index=0,
         animation_duration=300,
-        on_change=al_cambiar_pestana, # <-- NUEVO: Escuchamos el cambio de pestaña
+        on_change=guardar_config_al_cambiar_pestana, 
         tabs=[
             ft.Tab(text=t("tab_busqueda"), icon="search", content=contenedor_principal),
             ft.Tab(text=t("tab_config"), icon="settings", content=contenedor_configuracion),
