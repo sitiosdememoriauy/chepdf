@@ -6,6 +6,7 @@ import time
 import glob
 import hashlib
 import fitz  # PyMuPDF
+import json
 
 # --- OPTIMIZACIÓN DE CPU EN WINDOWS ---
 if sys.platform == 'win32':
@@ -19,6 +20,46 @@ else:
     
 INDICES_DIR = os.path.join(BASE_DIR, "indices")
 os.makedirs(INDICES_DIR, exist_ok=True)
+
+# =====================================================================
+# HERRAMIENTAS DEL MAPA JSON (Índice de Enrutamiento)
+# =====================================================================
+RUTA_MAPA = os.path.join(INDICES_DIR, "mapa_carpetas.json")
+
+def cargar_mapa_maestro():
+    """Carga el mapa existente de la memoria o crea uno vacío si es la primera vez."""
+    if os.path.exists(RUTA_MAPA):
+        with open(RUTA_MAPA, "r", encoding="utf-8") as f:
+            try:
+                return json.load(f)
+            except json.JSONDecodeError:
+                return {}
+    return {}
+
+def registrar_pdf_en_mapa(mapa, carpeta, archivo_db, anio):
+    """Evalúa el PDF que se está indexando y actualiza los límites de años."""
+    try:
+        anio_int = int(anio)
+    except (ValueError, TypeError):
+        return
+
+    if carpeta not in mapa:
+        mapa[carpeta] = {}
+
+    if archivo_db not in mapa[carpeta]:
+        mapa[carpeta][archivo_db] = {"min": anio_int, "max": anio_int}
+    else:
+        if anio_int < mapa[carpeta][archivo_db]["min"]:
+            mapa[carpeta][archivo_db]["min"] = anio_int
+        if anio_int > mapa[carpeta][archivo_db]["max"]:
+            mapa[carpeta][archivo_db]["max"] = anio_int
+
+def guardar_mapa_maestro(mapa):
+    """Guarda el diccionario consolidado físicamente en el archivo JSON."""
+    with open(RUTA_MAPA, "w", encoding="utf-8") as f:
+        json.dump(mapa, f, ensure_ascii=False, indent=4)
+# =====================================================================
+
 
 detener_indexacion = False
 
@@ -92,7 +133,6 @@ def obtener_rango_anios():
             ''')
             res = cursor.fetchone()
             conexion.close()
-            # ... (el resto de la función sigue igual) ...
 
             if res and res[0] is not None and res[1] is not None:
                 min_db, max_db = int(res[0]), int(res[1])
@@ -181,6 +221,16 @@ def indexar_documentos(carpeta_pdfs, metodo_anio="nombre_archivo", tamanio_max_m
     global detener_indexacion
     detener_indexacion = False 
     archivo_errores = os.path.join(BASE_DIR, "errores_indexacion.txt")
+    
+    # --- Archivo dedicado para los errores internos del PDF ---
+    archivo_mupdf_log = os.path.join(BASE_DIR, "log_pdfs_warnings.txt")
+    
+    # --- Silenciamos la salida de MuPDF a la consola ---
+    fitz.TOOLS.mupdf_display_errors(False)
+    fitz.TOOLS.mupdf_display_warnings(False)
+
+    # --- Cargamos el mapa a la memoria al iniciar ---
+    mapa_actual = cargar_mapa_maestro()
     
     max_db_size_bytes = tamanio_max_mb * 1024 * 1024 
     
@@ -305,7 +355,18 @@ def indexar_documentos(carpeta_pdfs, metodo_anio="nombre_archivo", tamanio_max_m
                     except: pass
                 
             try:
+                # --- Limpiamos la memoria de errores antes de abrir el PDF ---
+                fitz.TOOLS.reset_mupdf_warnings()
+                
                 doc = fitz.open(ruta_absoluta)
+                
+                # --- Verificamos si MuPDF se quejó al intentar estructurar el PDF ---
+                alertas_apertura = fitz.TOOLS.mupdf_warnings()
+                if alertas_apertura:
+                    with open(archivo_mupdf_log, "a", encoding="utf-8") as f:
+                        mensajes = alertas_apertura.strip().replace('\n', ' | ')
+                        f.write(f"[APERTURA] Archivo: {ruta_absoluta} -> Detalles: {mensajes}\n")
+
                 if doc.needs_pass: raise Exception("Protegido con contraseña.")
                 
                 anio_doc = extraer_anio_multifuente(ruta_absoluta, doc, metodo_anio)
@@ -319,8 +380,21 @@ def indexar_documentos(carpeta_pdfs, metodo_anio="nombre_archivo", tamanio_max_m
                     (ruta_pdf_relativa, ruta_carpeta_relativa, anio_doc, mtime_actual)
                 )
                 
+                registrar_pdf_en_mapa(mapa_actual, ruta_carpeta_relativa, os.path.basename(current_db_path), anio_doc)
+                
                 for num_pag, pagina in enumerate(doc):
+                    # --- Limpiamos la memoria antes de procesar la página ---
+                    fitz.TOOLS.reset_mupdf_warnings()
+                    
                     texto = pagina.get_text("text")
+                    
+                    # --- Verificamos si hubo errores específicos de sintaxis en esta página ---
+                    alertas_pagina = fitz.TOOLS.mupdf_warnings()
+                    if alertas_pagina:
+                        with open(archivo_mupdf_log, "a", encoding="utf-8") as f:
+                            mensajes = alertas_pagina.strip().replace('\n', ' | ')
+                            f.write(f"[PÁGINA {num_pag + 1}] Archivo: {ruta_absoluta} -> Detalles: {mensajes}\n")
+                    
                     if texto.strip():
                         texto_procesado = limpiar_texto_basico(texto)
                         if len(texto_procesado) > 5:
@@ -334,7 +408,7 @@ def indexar_documentos(carpeta_pdfs, metodo_anio="nombre_archivo", tamanio_max_m
                 
                 if archivos_nuevos_en_lote % lote_size == 0:
                     conexion.commit()
-                    if os.path.getsize(current_db_path) >= max_db_size_bytes: # <-- AHORA USA LA NUEVA VARIABLE
+                    if os.path.getsize(current_db_path) >= max_db_size_bytes: 
                         conexion.execute("INSERT INTO documentos(documentos) VALUES('optimize');")
                         conexion.commit()
                         conexion.close()
@@ -356,17 +430,57 @@ def indexar_documentos(carpeta_pdfs, metodo_anio="nombre_archivo", tamanio_max_m
         conexion.execute("INSERT INTO documentos(documentos) VALUES('optimize');")
         conexion.commit()
         
+        # --- NUEVO 3: Guardamos el mapa en el disco duro al finalizar ---
+        guardar_mapa_maestro(mapa_actual)
+        
         if ruta_carpeta_actual_en_proceso != "":
             if callback_progreso:
                 callback_progreso(archivos_procesados, total_pdfs, ruta_carpeta_actual_en_proceso, None, carpeta_terminada=True, total_carpeta=archivos_en_subcarpeta_actual)
             
         conexion.close()
 
-def buscar_texto(consulta_str, carpetas_permitidas=None, limite=50, offset=0, anio_min=None, anio_max=None, incluir_desconocidos=True, limite_maximo=10000):
+
+def buscar_texto(consulta_str, carpetas_permitidas=None, limite=50, offset=0, anio_min=None, anio_max=None, incluir_desconocidos=True, limite_maximo=10000, modo_busqueda="relevancia"):
     if not carpetas_permitidas: return {"total": 0, "resultados": []}
 
-    archivos_db_objetivo = glob.glob(os.path.join(INDICES_DIR, "*__part*.db"))
-    if not archivos_db_objetivo: return {"error": "No hay índices disponibles."}
+    # =========================================================
+    # LECTURA INTELIGENTE DEL MAPA JSON (Radar Min-Max)
+    # =========================================================
+    mapa = cargar_mapa_maestro()
+    archivos_db_filtrados = set()
+
+    if mapa:
+        for carpeta_ui in carpetas_permitidas:
+            for carpeta_mapa, dbs in mapa.items():
+                # Comprobamos si la base de datos pertenece a la carpeta seleccionada (o subcarpetas)
+                es_match = False
+                if carpeta_ui == "raiz":
+                    if "/" not in carpeta_mapa and "\\" not in carpeta_mapa:
+                        es_match = True
+                else:
+                    if carpeta_mapa == carpeta_ui or carpeta_mapa.startswith(carpeta_ui + "/") or carpeta_mapa.startswith(carpeta_ui + "\\"):
+                        es_match = True
+                        
+                if es_match:
+                    for db_name, rangos in dbs.items():
+                        # Matemáticas de colisión de años
+                        if anio_min is not None and anio_max is not None and not incluir_desconocidos:
+                            db_min = rangos.get("min")
+                            db_max = rangos.get("max")
+                            if db_min is not None and db_max is not None:
+                                if (anio_min <= db_max) and (anio_max >= db_min):
+                                    archivos_db_filtrados.add(db_name)
+                        else:
+                            # Si se marcan los "Desconocidos", debemos abrir la DB por las dudas
+                            archivos_db_filtrados.add(db_name)
+                            
+        # Convertimos los nombres a rutas absolutas para que SQLite las encuentre
+        archivos_db_objetivo = [os.path.join(INDICES_DIR, db) for db in archivos_db_filtrados]
+    else:
+        # Respaldo: Si el JSON se borró por error, vuelve al método antiguo ciego
+        archivos_db_objetivo = glob.glob(os.path.join(INDICES_DIR, "*__part*.db"))
+
+    if not archivos_db_objetivo: return {"total": 0, "resultados": []}
 
     # =========================================================
     # CONSTRUIR FILTRO DE SUBCARPETAS PARA SQL
@@ -388,12 +502,18 @@ def buscar_texto(consulta_str, carpetas_permitidas=None, limite=50, offset=0, an
     total_hits = 0
     hits_por_db = []
 
+
+    tope_conteo = limite_maximo if modo_busqueda == "relevancia" else (offset + limite + 1)
+
     for db_path in archivos_db_objetivo:
+        if total_hits >= tope_conteo:
+            break 
+            
         try:
             conexion = sqlite3.connect(db_path)
             cursor = conexion.cursor()
             
-            limite_restante_conteo = limite_maximo - total_hits + 1
+            limite_restante_conteo = tope_conteo - total_hits
             
             query_base = f"SELECT count(*) FROM (SELECT 1 FROM documentos WHERE contenido MATCH ?"
             params = [consulta_str]
@@ -419,7 +539,7 @@ def buscar_texto(consulta_str, carpetas_permitidas=None, limite=50, offset=0, an
                 
             conexion.close()
             
-            if total_hits > limite_maximo:
+            if modo_busqueda == "relevancia" and total_hits > limite_maximo:
                 return {"excede_limite": True, "total": f"+{limite_maximo}", "limite_maximo": limite_maximo}
 
         except sqlite3.OperationalError as e:
@@ -456,7 +576,14 @@ def buscar_texto(consulta_str, carpetas_permitidas=None, limite=50, offset=0, an
         query_search += condicion_carpetas_sql
         params_search.extend(params_carpetas)
             
-        query_search += " ORDER BY rank LIMIT ? OFFSET ?"
+        # --- NUEVO: Bifurcación de rendimiento ---
+        if modo_busqueda == "relevancia":
+            # Búsqueda profunda y pesada
+            query_search += " ORDER BY rank LIMIT ? OFFSET ?"
+        else:
+            # Modo rápido: sin ordenamiento, devuelve en el orden físico del disco (Instantáneo)
+            query_search += " LIMIT ? OFFSET ?"
+            
         params_search.extend([limite_restante, offset_restante])
         
         cursor.execute(query_search, params_search)
