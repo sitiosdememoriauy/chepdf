@@ -1,11 +1,12 @@
-import PyInstaller.__main__
+import subprocess
 import shutil
 import os
 import platform
+import sys
 
-print("Iniciando compilación de Che PDF...")
+print("Iniciando compilación de Che PDF usando Flet Pack...")
 
-# --- NUEVO: Chequeo de dependencias en Linux ---
+# --- Chequeo de dependencias en Linux ---
 if platform.system() == "Linux":
     ruta_mpv1 = "/usr/lib/x86_64-linux-gnu/libmpv.so.1"
     ruta_mpv2 = "/usr/lib/x86_64-linux-gnu/libmpv.so.2"
@@ -24,48 +25,77 @@ if platform.system() == "Linux":
         print("="*60 + "\n")
 # ----------------------------------------------
 
-# 1. Ejecutamos PyInstaller desde adentro de Python
-PyInstaller.__main__.run([
-    'app.py',
-    '--noconfirm',
-    '--windowed',
-    '--onedir',
-    '--name=Che PDF',
-    '--icon=_internal/assets/icono_che.ico'
-])
+# 1. Ejecutamos flet pack
+print("\nEmpaquetando motor asíncrono (Esto puede tardar un minuto)...")
+
+ejecutable_flet = os.path.join(os.path.dirname(sys.executable), "flet.exe" if platform.system() == "Windows" else "flet")
+if not os.path.exists(ejecutable_flet):
+    ejecutable_flet = "flet"
+
+comando_flet = [
+    ejecutable_flet, "pack", "app.py",
+    "--name", "Che PDF",
+    "--icon", "_internal/assets/icono_che.ico"
+]
+
+try:
+    subprocess.run(comando_flet, check=True)
+except subprocess.CalledProcessError as e:
+    print(f"\n❌ Error crítico al compilar con Flet Pack. Revisa la consola arriba. Código: {e.returncode}")
+    exit(1)
+except FileNotFoundError:
+    print("\n❌ Error: No se pudo encontrar el comando 'flet'. Asegúrate de tenerlo instalado: pip install flet")
+    exit(1)
 
 print("\nEnsamblando la distribución final...")
 
-# 2. Definimos dónde quedó el programa compilado
-ruta_dist = os.path.join('dist', 'Che PDF')
+# ==============================================================
+# CREAR UNA CARPETA CONTENEDORA LIMPIA
+# ==============================================================
+nombre_exe = "Che PDF.exe" if platform.system() == "Windows" else "Che PDF"
+ruta_exe_crudo = os.path.join('dist', nombre_exe)
+
+# Creamos la carpeta donde vivirá todo el proyecto junto
+ruta_dist = os.path.join('dist', 'Che_PDF')
+
+# Limpiamos si ya existía de un intento anterior
+if os.path.exists(ruta_dist):
+    shutil.rmtree(ruta_dist)
+os.makedirs(ruta_dist, exist_ok=True)
+
+# 2. Movemos el ejecutable adentro de la nueva carpeta
+if os.path.exists(ruta_exe_crudo):
+    shutil.move(ruta_exe_crudo, os.path.join(ruta_dist, nombre_exe))
+else:
+    print(f"⚠️ No se encontró el archivo {ruta_exe_crudo}. Algo falló en la compilación de Flet.")
 
 # 3. Copiamos la carpeta de idiomas a la raíz del ejecutable
 ruta_locales_origen = 'locales'
 ruta_locales_destino = os.path.join(ruta_dist, 'locales')
 
 if os.path.exists(ruta_locales_origen):
-    print(f"Copiando traducciones a {ruta_locales_destino}...")
+    print(f" -> Copiando traducciones a {ruta_locales_destino}...")
     shutil.copytree(ruta_locales_origen, ruta_locales_destino, dirs_exist_ok=True)
 
 # 4. Copiamos TODOS los archivos README dinámicamente
-print("Buscando archivos de documentación (README)...")
+print(" -> Buscando archivos de documentación (README)...")
 archivos_en_raiz = os.listdir('.')
-
 for archivo in archivos_en_raiz:
-    # Convertimos a minúsculas para atrapar README.md, readme-en.md, Readme.md, etc.
     if archivo.lower().startswith('readme') and archivo.lower().endswith('.md'):
-        print(f" -> Copiando {archivo}...")
+        print(f"    - Copiando {archivo}...")
         shutil.copy(archivo, ruta_dist)
 
 # 5. Copiamos los recursos gráficos (imágenes y logos)
-# Detectamos automáticamente dónde tienes guardada tu carpeta de imágenes original
 ruta_assets_origen = 'assets' if os.path.exists('assets') else os.path.join('_internal', 'assets')
 ruta_assets_destino = os.path.join(ruta_dist, '_internal', 'assets')
 
 if os.path.exists(ruta_assets_origen):
-    print(f"Copiando recursos visuales a {ruta_assets_destino}...")
+    print(f" -> Copiando recursos visuales a {ruta_assets_destino}...")
     shutil.copytree(ruta_assets_origen, ruta_assets_destino, dirs_exist_ok=True)
 else:
     print("⚠️ No se encontró la carpeta original de assets. Las imágenes podrían faltar.")
 
-print("\n¡Éxito! El programa está listo y ensamblado en la carpeta 'dist/Che PDF'.")
+print("\n=======================================================")
+print("¡Éxito! El programa está listo y ensamblado.")
+print("Puedes encontrar tu versión final: 'dist/Che_PDF'")
+print("=======================================================\n")
