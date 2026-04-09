@@ -12,6 +12,7 @@ import urllib.parse
 import json
 import locale
 import time
+import multiprocessing
 
 CONFIG_FILE = os.path.join(motor_sqlite.BASE_DIR, "config.json")
 
@@ -974,4 +975,6 @@ def main(page: ft.Page):
 
     page.add(encabezado, ft.Divider(), tabs)
 
-ft.app(target=main, assets_dir="_internal/assets")
+if __name__ == '__main__':
+    multiprocessing.freeze_support()
+    ft.app(target=main, assets_dir="_internal/assets")
