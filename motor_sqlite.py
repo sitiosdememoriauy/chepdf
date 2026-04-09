@@ -6,7 +6,7 @@ import time
 import glob
 import hashlib
 import fitz  # PyMuPDF
-import json
+import json  # <-- NUEVO: Importación para el mapa
 
 # --- OPTIMIZACIÓN DE CPU EN WINDOWS ---
 if sys.platform == 'win32':
@@ -26,38 +26,42 @@ os.makedirs(INDICES_DIR, exist_ok=True)
 # =====================================================================
 RUTA_MAPA = os.path.join(INDICES_DIR, "mapa_carpetas.json")
 
-def cargar_mapa_maestro():
-    """Carga el mapa existente de la memoria o crea uno vacío si es la primera vez."""
-    if os.path.exists(RUTA_MAPA):
-        with open(RUTA_MAPA, "r", encoding="utf-8") as f:
-            try:
-                return json.load(f)
-            except json.JSONDecodeError:
-                return {}
-    return {}
-
-def registrar_pdf_en_mapa(mapa, carpeta, archivo_db, anio):
-    """Evalúa el PDF que se está indexando y actualiza los límites de años."""
-    try:
-        anio_int = int(anio)
-    except (ValueError, TypeError):
-        return
-
-    if carpeta not in mapa:
-        mapa[carpeta] = {}
-
-    if archivo_db not in mapa[carpeta]:
-        mapa[carpeta][archivo_db] = {"min": anio_int, "max": anio_int}
-    else:
-        if anio_int < mapa[carpeta][archivo_db]["min"]:
-            mapa[carpeta][archivo_db]["min"] = anio_int
-        if anio_int > mapa[carpeta][archivo_db]["max"]:
-            mapa[carpeta][archivo_db]["max"] = anio_int
-
-def guardar_mapa_maestro(mapa):
-    """Guarda el diccionario consolidado físicamente en el archivo JSON."""
+def sincronizar_mapa_json():
+    """Lee la tabla rápida de todos los .db y reconstruye el JSON con precisión del 100%"""
+    mapa_nuevo = {}
+    archivos_db = glob.glob(os.path.join(INDICES_DIR, "*__part*.db"))
+    
+    for db_path in archivos_db:
+        nombre_db = os.path.basename(db_path)
+        try:
+            conexion = sqlite3.connect(db_path)
+            cursor = conexion.cursor()
+            
+            # 1. Agrupamos y sacamos Min/Max de un solo golpe con SQL
+            cursor.execute('''
+                SELECT carpeta, MIN(CAST(anio AS INTEGER)), MAX(CAST(anio AS INTEGER))
+                FROM metadatos_pdf 
+                WHERE anio != 'Desconocido' AND anio IS NOT NULL AND CAST(anio AS INTEGER) > 0
+                GROUP BY carpeta
+            ''')
+            for carpeta, min_a, max_a in cursor.fetchall():
+                if carpeta not in mapa_nuevo: mapa_nuevo[carpeta] = {}
+                mapa_nuevo[carpeta][nombre_db] = {"min": int(min_a), "max": int(max_a)}
+            
+            # 2. Rescatamos carpetas que SOLO tengan PDFs "Desconocidos"
+            cursor.execute("SELECT DISTINCT carpeta FROM metadatos_pdf WHERE anio = 'Desconocido'")
+            for (carpeta,) in cursor.fetchall():
+                if carpeta not in mapa_nuevo: mapa_nuevo[carpeta] = {}
+                if nombre_db not in mapa_nuevo[carpeta]:
+                    mapa_nuevo[carpeta][nombre_db] = {"min": 0, "max": 0} # 0 funciona como flag seguro
+                    
+            conexion.close()
+        except sqlite3.OperationalError:
+            pass
+            
+    # Sobreescribimos el archivo físico con la verdad absoluta
     with open(RUTA_MAPA, "w", encoding="utf-8") as f:
-        json.dump(mapa, f, ensure_ascii=False, indent=4)
+        json.dump(mapa_nuevo, f, ensure_ascii=False, indent=4)
 # =====================================================================
 
 
@@ -229,8 +233,7 @@ def indexar_documentos(carpeta_pdfs, metodo_anio="nombre_archivo", tamanio_max_m
     fitz.TOOLS.mupdf_display_errors(False)
     fitz.TOOLS.mupdf_display_warnings(False)
 
-    # --- Cargamos el mapa a la memoria al iniciar ---
-    mapa_actual = cargar_mapa_maestro()
+    # --- ELIMINADO: mapa_actual = cargar_mapa_maestro() ---
     
     max_db_size_bytes = tamanio_max_mb * 1024 * 1024 
     
@@ -254,7 +257,6 @@ def indexar_documentos(carpeta_pdfs, metodo_anio="nombre_archivo", tamanio_max_m
             conexion = sqlite3.connect(db_path)
             cursor = conexion.cursor()
             
-            # Buscamos directo en metadatos_pdf
             cursor.execute("SELECT ruta FROM metadatos_pdf")
             rutas_db = cursor.fetchall()
             
@@ -355,12 +357,12 @@ def indexar_documentos(carpeta_pdfs, metodo_anio="nombre_archivo", tamanio_max_m
                     except: pass
                 
             try:
-                # --- Limpiamos la memoria de errores antes de abrir el PDF ---
+                # Limpiamos la memoria de errores antes de abrir el PDF
                 fitz.TOOLS.reset_mupdf_warnings()
                 
                 doc = fitz.open(ruta_absoluta)
                 
-                # --- Verificamos si MuPDF se quejó al intentar estructurar el PDF ---
+                # Verificamos si MuPDF se quejó al intentar estructurar el PDF
                 alertas_apertura = fitz.TOOLS.mupdf_warnings()
                 if alertas_apertura:
                     with open(archivo_mupdf_log, "a", encoding="utf-8") as f:
@@ -380,15 +382,13 @@ def indexar_documentos(carpeta_pdfs, metodo_anio="nombre_archivo", tamanio_max_m
                     (ruta_pdf_relativa, ruta_carpeta_relativa, anio_doc, mtime_actual)
                 )
                 
-                registrar_pdf_en_mapa(mapa_actual, ruta_carpeta_relativa, os.path.basename(current_db_path), anio_doc)
-                
                 for num_pag, pagina in enumerate(doc):
-                    # --- Limpiamos la memoria antes de procesar la página ---
+                    # Limpiamos la memoria antes de procesar la página
                     fitz.TOOLS.reset_mupdf_warnings()
                     
                     texto = pagina.get_text("text")
                     
-                    # --- Verificamos si hubo errores específicos de sintaxis en esta página ---
+                    # Verificamos si hubo errores específicos de sintaxis en esta página
                     alertas_pagina = fitz.TOOLS.mupdf_warnings()
                     if alertas_pagina:
                         with open(archivo_mupdf_log, "a", encoding="utf-8") as f:
@@ -408,6 +408,13 @@ def indexar_documentos(carpeta_pdfs, metodo_anio="nombre_archivo", tamanio_max_m
                 
                 if archivos_nuevos_en_lote % lote_size == 0:
                     conexion.commit()
+                    
+                    # =========================================================
+                    # CHECKPOINT: SINCRONIZAR JSON PARA BÚSQUEDA EN TIEMPO REAL
+                    # =========================================================
+                    sincronizar_mapa_json()
+                    # =========================================================
+
                     if os.path.getsize(current_db_path) >= max_db_size_bytes: 
                         conexion.execute("INSERT INTO documentos(documentos) VALUES('optimize');")
                         conexion.commit()
@@ -427,17 +434,22 @@ def indexar_documentos(carpeta_pdfs, metodo_anio="nombre_archivo", tamanio_max_m
                     
     if conexion:
         conexion.commit()
-        conexion.execute("INSERT INTO documentos(documentos) VALUES('optimize');")
-        conexion.commit()
         
-        # --- NUEVO 3: Guardamos el mapa en el disco duro al finalizar ---
-        guardar_mapa_maestro(mapa_actual)
+        # Solo optimizamos FTS5 si no detuvimos el proceso abruptamente
+        if not detener_indexacion:
+            conexion.execute("INSERT INTO documentos(documentos) VALUES('optimize');")
+            conexion.commit()
         
         if ruta_carpeta_actual_en_proceso != "":
             if callback_progreso:
                 callback_progreso(archivos_procesados, total_pdfs, ruta_carpeta_actual_en_proceso, None, carpeta_terminada=True, total_carpeta=archivos_en_subcarpeta_actual)
             
         conexion.close()
+
+    # =========================================================
+    # SINCRONIZACIÓN FINAL INFALIBLE (Aun si se abortó)
+    # =========================================================
+    sincronizar_mapa_json()
 
 
 def buscar_texto(consulta_str, carpetas_permitidas=None, limite=50, offset=0, anio_min=None, anio_max=None, incluir_desconocidos=True, limite_maximo=10000, modo_busqueda="relevancia"):
@@ -446,7 +458,14 @@ def buscar_texto(consulta_str, carpetas_permitidas=None, limite=50, offset=0, an
     # =========================================================
     # LECTURA INTELIGENTE DEL MAPA JSON (Radar Min-Max)
     # =========================================================
-    mapa = cargar_mapa_maestro()
+    mapa = {}
+    if os.path.exists(RUTA_MAPA):
+        try:
+            with open(RUTA_MAPA, "r", encoding="utf-8") as f:
+                mapa = json.load(f)
+        except Exception:
+            pass
+
     archivos_db_filtrados = set()
 
     if mapa:
