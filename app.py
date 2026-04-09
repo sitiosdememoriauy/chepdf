@@ -573,7 +573,16 @@ def main(page: ft.Page):
     encabezado = ft.Row([
         ft.Image(src="icono_che.png", width=60, height=60, fit=ft.ImageFit.CONTAIN),
         ft.Column([
-            ft.Text("Che PDF", size=28, weight="w800"), 
+            ft.Row(
+                controls=[
+                    ft.Text("Che PDF", size=28, weight="w800"), 
+                    ft.Text(f"v{VERSION}", size=14, color="grey500", weight="w500") 
+                ],
+                alignment=ft.MainAxisAlignment.START, 
+                vertical_alignment=ft.CrossAxisAlignment.END,
+                spacing=8
+            ),
+            # -------------------------------------------------------
             ft.Text(
                 spans=[
                     ft.TextSpan(t("lbl_un_desarrollo_de"), style=ft.TextStyle(size=12, color="grey400")),
