@@ -597,7 +597,11 @@ def main(page: ft.Page):
         ], spacing=2),
     ], alignment=ft.MainAxisAlignment.START, vertical_alignment=ft.CrossAxisAlignment.CENTER)
 
-    contenedor_principal = ft.Row([barra_lateral, divisor_movil, area_busqueda], expand=True)
+    contenedor_principal = ft.Container(
+        content=ft.Row([barra_lateral, divisor_movil, area_busqueda]),
+        expand=True,
+        padding=ft.padding.only(top=10) # Empuja todo el contenido hacia abajo
+    )
 
     # --- PESTAÑA DE CONFIGURACIÓN ---
     dropdown_idioma = ft.Dropdown(
