@@ -13,6 +13,7 @@ import json
 import locale
 import time
 import multiprocessing
+import sys
 
 CONFIG_FILE = os.path.join(motor_sqlite.BASE_DIR, "config.json")
 
@@ -986,4 +987,11 @@ def main(page: ft.Page):
 
 if __name__ == '__main__':
     multiprocessing.freeze_support()
-    ft.app(target=main, assets_dir="_internal/assets")
+    
+    if getattr(sys, 'frozen', False):
+        ruta_base_real = os.path.dirname(sys.executable)
+    else:
+        ruta_base_real = os.path.dirname(os.path.abspath(__file__))
+
+    ruta_assets_absoluta = os.path.join(ruta_base_real, "_internal", "assets")
+    ft.app(target=main, assets_dir=ruta_assets_absoluta)
