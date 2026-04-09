@@ -1,4 +1,4 @@
-VERSION = "1.2"
+VERSION = "1.2.1"
 
 import flet as ft
 import motor_sqlite
@@ -740,16 +740,24 @@ def main(page: ft.Page):
         # ==========================================================
 
         txt_desc_config_metodo.value = t("desc_config_metodo")
-        radio_metodo_anio.content.controls[0].label = t("opt_metodo_nombre")
-        radio_metodo_anio.content.controls[1].label = t("opt_metodo_carpeta")
-        radio_metodo_anio.content.controls[2].label = t("opt_metodo_metadatos")
+        
+        # --- Recreamos la columna completa para el método de año ---
+        radio_metodo_anio.content = ft.Column([
+            ft.Radio(value="nombre_archivo", label=t("opt_metodo_nombre")),
+            ft.Radio(value="carpeta", label=t("opt_metodo_carpeta")),
+            ft.Radio(value="metadatos", label=t("opt_metodo_metadatos")),
+        ])
 
         txt_lbl_rendimiento_busqueda.value = t("lbl_rendimiento_busqueda")
         txt_desc_tamanio_db.value = t("desc_tamanio_db")
         
         txt_lbl_modo_busqueda.value = t("lbl_modo_busqueda") if "lbl_modo_busqueda" in diccionario_textos else "Modo de Búsqueda"
-        radio_modo_busqueda.content.controls[0].label = t("opt_modo_relevancia") if "opt_modo_relevancia" in diccionario_textos else "Precisión: Ordenar por relevancia FTS5 (Recomendado)"
-        radio_modo_busqueda.content.controls[1].label = t("opt_modo_rapido") if "opt_modo_rapido" in diccionario_textos else "Velocidad: Carga continua por orden de indexación (Instantáneo)"
+        
+        # --- Recreamos la columna completa para el modo de búsqueda ---
+        radio_modo_busqueda.content = ft.Column([
+            ft.Radio(value="relevancia", label=t("opt_modo_relevancia") if "opt_modo_relevancia" in diccionario_textos else "Precisión: Ordenar por relevancia FTS5 (Recomendado)"),
+            ft.Radio(value="rapida", label=t("opt_modo_rapido") if "opt_modo_rapido" in diccionario_textos else "Velocidad: Carga continua por orden de indexación (Instantáneo)"),
+        ])
 
         txt_desc_config_limite.value = t("desc_config_limite")
         txt_limite.label = t("lbl_limite_maximo")
