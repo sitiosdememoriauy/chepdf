@@ -1,4 +1,4 @@
-VERSION = "1.3"
+VERSION = "1.4"
 
 import flet as ft
 import motor_sqlite
@@ -14,6 +14,13 @@ import locale
 import time
 import multiprocessing
 import sys
+import unicodedata
+
+# --- IMPORTACIONES PARA EXPORTACIÓN ODS ---
+from odf.opendocument import OpenDocumentSpreadsheet
+from odf.table import Table, TableRow, TableCell
+from odf.text import P, Span
+from odf.style import Style, TextProperties
 
 CONFIG_FILE = os.path.join(motor_sqlite.BASE_DIR, "config.json")
 
@@ -301,6 +308,7 @@ def main(page: ft.Page):
             lista_resultados.controls.clear()
             fila_paginador.visible = False
             contenedor_cargar_mas.visible = False
+            btn_exportar.visible = False # Ocultar el botón si se borra el índice
         else:
             txt_estado_indexacion.value = t("msg_error_borrado").format(resultado)
         page.update()
@@ -403,6 +411,148 @@ def main(page: ft.Page):
     )
 
     # --- 5. ÁREA PRINCIPAL DE BÚSQUEDA ---
+    
+    # --- LÓGICA DE EXPORTACIÓN A ODS ---
+    def on_exportar_result(e: ft.FilePickerResultEvent):
+        if e.path:
+            exportar_resultados_ods(e.path)
+
+    export_picker = ft.FilePicker(on_result=on_exportar_result)
+    page.overlay.append(export_picker)
+
+    def sanitizar_nombre(texto):
+        # 1. Quitar acentos (ej: "Cárcel" -> "Carcel")
+        texto_limpio = unicodedata.normalize('NFKD', str(texto)).encode('ASCII', 'ignore').decode('utf-8')
+        # 2. Pasar a minúsculas
+        texto_limpio = texto_limpio.lower()
+        # 3. Reemplazar espacios y símbolos por guiones
+        texto_limpio = re.sub(r'[^a-z0-9]+', '-', texto_limpio)
+        # 4. Recortar a 10 caracteres y quitar guiones en los bordes
+        texto_limpio = texto_limpio[:10].strip('-')
+        return texto_limpio if texto_limpio else "export"
+
+    def abrir_dialogo_exportar(e):
+        # Leemos los datos que guardamos en el botón durante la búsqueda
+        datos = btn_exportar.data
+        if not datos: return
+        
+        palabra_saneada = sanitizar_nombre(datos["consulta"])
+        total_hits = datos["total"]
+        
+        # Armamos el nombre: chepdf-palabra-numero.ods
+        nombre_sugerido = f"chepdf-{palabra_saneada}-{total_hits}.ods"
+        
+        export_picker.save_file(
+            dialog_title="Guardar resultados como...",
+            file_name=nombre_sugerido,
+            allowed_extensions=["ods"]
+        )
+
+    def exportar_resultados_ods(ruta_destino):
+        txt_estado_busqueda.value = t("msg_calculando_resultados") if "msg_calculando_resultados" in diccionario_textos else "Exportando resultados, por favor espera..."
+        btn_exportar.disabled = True
+        page.update()
+        
+        consulta = txt_busqueda.value
+        carpetas_seleccionadas = [cb.data for cb in lista_checkboxes.controls if cb.value]
+        anio_min = int(slider_anios.start_value) if not slider_anios.disabled else None
+        anio_max = int(slider_anios.end_value) if not slider_anios.disabled else None
+        incluir_desc = check_desconocidos.value
+        modo_actual = config_app.get("modo_busqueda", "relevancia")
+        limite_max = int(config_app.get("limite_resultados", 10000))
+
+        # Hacemos una búsqueda pidiendo TODOS los resultados (hasta el límite máximo)
+        respuesta = motor_sqlite.buscar_texto(
+            consulta_str=consulta, 
+            carpetas_permitidas=carpetas_seleccionadas,
+            limite=limite_max, 
+            offset=0,
+            anio_min=anio_min,
+            anio_max=anio_max,
+            incluir_desconocidos=incluir_desc,
+            limite_maximo=limite_max,
+            modo_busqueda=modo_actual
+        )
+
+        try:
+            doc = OpenDocumentSpreadsheet()
+            
+            # --- NUEVO: CREAR ESTILO DE RESALTADO ---
+            # Creamos un estilo de texto rojo oscuro (#d32f2f) y negrita
+            style_highlight = Style(name="HitHighlight", family="text")
+            style_highlight.addElement(TextProperties(color="#d32f2f", fontweight="bold"))
+            doc.automaticstyles.addElement(style_highlight)
+            # ----------------------------------------
+
+            table = Table(name="Resultados")
+            doc.spreadsheet.addElement(table)
+
+            # Fila de Encabezados
+            tr_head = TableRow()
+            for col in ["Carpeta", "Archivo", "Página", "Año", "Palabra Buscada", "Snippet"]:
+                tc = TableCell()
+                tc.addElement(P(text=col))
+                tr_head.addElement(tc)
+            table.addElement(tr_head)
+
+            # Filas de Datos
+            for res in respuesta.get("resultados", []):
+                tr = TableRow()
+                
+                ruta_completa = res['ruta']
+                carpeta = os.path.dirname(ruta_completa)
+                nombre_archivo = os.path.basename(ruta_completa)
+                
+                if not carpeta:
+                    carpeta = "Raíz"
+                
+                # 1. Agregamos las celdas normales primero
+                datos_basicos = [carpeta, nombre_archivo, res['pagina'], res['anio'], consulta]
+                for val in datos_basicos:
+                    tc = TableCell()
+                    tc.addElement(P(text=str(val)))
+                    tr.addElement(tc)
+                    
+                # 2. Agregamos la celda del Snippet con colores múltiples
+                tc_snippet = TableCell()
+                p_snippet = P()
+                
+                # Partimos el texto usando las etiquetas <b> que manda SQLite
+                fragmentos = re.split(r'(<b>.*?</b>)', res['extracto'])
+                
+                for frag in fragmentos:
+                    if frag.startswith('<b>') and frag.endswith('</b>'):
+                        # Extraemos la palabra sin el <b> y </b>, y le aplicamos el estilo
+                        texto_hit = frag[3:-4]
+                        span_hit = Span(stylename=style_highlight, text=texto_hit)
+                        p_snippet.addElement(span_hit)
+                    elif frag: # Evitar procesar fragmentos vacíos
+                        # Es texto normal alrededor del hit
+                        p_snippet.addText(frag)
+                        
+                tc_snippet.addElement(p_snippet)
+                tr.addElement(tc_snippet)
+
+                table.addElement(tr)
+
+            # Guardamos el archivo físico
+            doc.save(ruta_destino)
+            txt_estado_busqueda.value = f"¡Exportación exitosa! {len(respuesta.get('resultados', []))} resultados guardados en ODS."
+        except Exception as ex:
+            txt_estado_busqueda.value = f"Error al exportar: {ex}"
+            txt_estado_busqueda.color = "red400"
+            
+        btn_exportar.disabled = False
+        page.update()
+
+    btn_exportar = ft.ElevatedButton(
+        t("btn_exportar") if "btn_exportar" in diccionario_textos else "Exportar ODS", 
+        icon="table_view", 
+        visible=False,
+        on_click=abrir_dialogo_exportar
+    )
+    # -----------------------------------
+
     txt_busqueda = ft.TextField(label=t("lbl_buscar_ejemplo"), expand=True, on_submit=lambda e: ejecutar_busqueda(nueva_busqueda=True))
     btn_buscar = ft.ElevatedButton(t("btn_buscar"), icon="search", on_click=lambda e: ejecutar_busqueda(nueva_busqueda=True))
     
@@ -471,6 +621,7 @@ def main(page: ft.Page):
         txt_estado_busqueda.value = t("msg_calculando_resultados")
         fila_paginador.visible = False
         contenedor_cargar_mas.visible = False
+        btn_exportar.visible = False # Aseguramos que se oculte al iniciar una nueva búsqueda
         page.update()
 
         carpetas_seleccionadas = [cb.data for cb in lista_checkboxes.controls if cb.value]
@@ -502,12 +653,14 @@ def main(page: ft.Page):
         if "error" in respuesta:
             txt_estado_busqueda.value = t("msg_error_sintaxis")
             txt_estado_busqueda.color = "red400"
+            btn_exportar.visible = False
             page.update()
             return
             
         if respuesta.get("excede_limite"):
             txt_estado_busqueda.value = t("msg_limite_excedido").format(limite_max, respuesta['total'])
             txt_estado_busqueda.color = "orange400"
+            btn_exportar.visible = False
             page.update()
             return
 
@@ -515,8 +668,11 @@ def main(page: ft.Page):
         if total_hits == 0:
             txt_estado_busqueda.value = t("msg_sin_resultados")
             txt_estado_busqueda.color = "grey400"
+            btn_exportar.visible = False
         else:
             txt_estado_busqueda.color = "grey400"
+            btn_exportar.visible = True
+            btn_exportar.data = {"consulta": consulta, "total": total_hits}
             estado_busqueda["total_paginas"] = math.ceil(total_hits / estado_busqueda["resultados_por_pagina"])
             
             if modo_actual == "relevancia":
@@ -562,7 +718,7 @@ def main(page: ft.Page):
     )
 
     area_busqueda = ft.Column([
-        ft.Row([txt_busqueda, btn_buscar]), 
+        ft.Row([txt_busqueda, btn_buscar, btn_exportar]), 
         panel_estado_sistema,
         txt_estado_busqueda,
         lista_resultados,
@@ -715,6 +871,7 @@ def main(page: ft.Page):
         btn_anterior.text = t("btn_anterior")
         btn_siguiente.text = t("btn_siguiente")
         btn_cargar_mas.text = t("btn_cargar_mas") if "btn_cargar_mas" in diccionario_textos else "Cargar más resultados..."
+        btn_exportar.text = t("btn_exportar") if "btn_exportar" in diccionario_textos else "Exportar ODS"
 
         # Dialogo borrar
         dlg_borrar.title.value = t("lbl_gestion_indice")
@@ -961,7 +1118,6 @@ def main(page: ft.Page):
         )
 
     def guardar_config_al_cambiar_pestana(e):
-        # Esta función corre en silencio cada vez que tocás una pestaña superior
         config_app["metodo_anio"] = radio_metodo_anio.value
         config_app["tamanio_max_db"] = int(dropdown_tamanio_db.value)
         config_app["modo_busqueda"] = radio_modo_busqueda.value
