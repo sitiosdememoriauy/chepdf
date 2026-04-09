@@ -105,6 +105,10 @@ Este proyecto está bajo la Licencia GNU GPLv3. Eres libre de usar, estudiar, co
 
 ## Historial de Versiones
 
+### v1.3 (Abril 2026)
+* **Estabilidad Multi-hilo (Anti-Fork Bomb):** Transición al motor asíncrono puro de Flet e implementación de escudos de multiprocesamiento (freeze_support), erradicando la clonación infinita de ventanas al ejecutar el binario en Windows.
+* **Distribución Portable Inteligente:** Nuevo motor de compilación que empaqueta automáticamente el ejecutable, los idiomas y los recursos visuales en una única carpeta maestra (Che_PDF_Portable) lista para distribuir.
+
 ### v1.2 (Abril 2026)
 * **Motor de Búsqueda Dual:**  Opción configurable para alternar entre "Modo Precisión" (ranking algorítmico FTS5) y "Modo Velocidad" (extracción secuencial instantánea).
 * **Exploración Continua:**  Nuevo sistema de paginación por scroll (algoritmo Límite + 1) en modo rápido, permitiendo cargar resultados infinitos sin saturar la memoria RAM.
