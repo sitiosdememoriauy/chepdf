@@ -1,4 +1,4 @@
-VERSION = "1.4"
+VERSION = "1.5"
 
 import flet as ft
 import motor_sqlite
