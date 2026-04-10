@@ -59,6 +59,21 @@ def sincronizar_mapa_json():
 
 detener_indexacion = False
 
+# --- NUEVO: Variables para el Kill Switch de búsquedas ---
+conexion_busqueda_activa = None
+busqueda_cancelada = False
+
+def detener_busqueda():
+    """Interrumpe forzosamente cualquier consulta SQL en curso y libera los archivos."""
+    global conexion_busqueda_activa, busqueda_cancelada
+    busqueda_cancelada = True
+    if conexion_busqueda_activa:
+        try:
+            conexion_busqueda_activa.interrupt()
+        except Exception:
+            pass
+# ---------------------------------------------------------
+
 def obtener_ruta_relativa(ruta_absoluta):
     try: return os.path.relpath(ruta_absoluta, BASE_DIR)
     except ValueError: return ruta_absoluta
@@ -73,7 +88,6 @@ def inicializar_db(db_path):
     cursor.execute('''CREATE TABLE IF NOT EXISTS info_db (clave TEXT PRIMARY KEY, valor TEXT)''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS metadatos_pdf (ruta TEXT PRIMARY KEY, carpeta TEXT, anio TEXT, mtime REAL)''')
     
-    # LA MAGIA ESTÁ AQUÍ: Agregamos "carpeta" al índice virtual FTS5
     cursor.execute('''
         CREATE VIRTUAL TABLE IF NOT EXISTS documentos USING fts5(
             ruta UNINDEXED, 
@@ -208,7 +222,6 @@ def indexar_documentos(carpeta_pdfs, metodo_anio="nombre_archivo", tamanio_max_m
     
     archivos_db_objetivo = glob.glob(os.path.join(INDICES_DIR, f"{nombre_base_db}__part*.db"))
 
-    # Limpieza previa
     for db_path in archivos_db_objetivo:
         if detener_indexacion: break
         conexion = None
@@ -312,7 +325,6 @@ def indexar_documentos(carpeta_pdfs, metodo_anio="nombre_archivo", tamanio_max_m
                         (ruta_pdf_relativa, ruta_carpeta_relativa, anio_doc, mtime_actual)
                     )
                     
-                    # Preparar el nombre de carpeta seguro para FTS5
                     carpeta_fts = ruta_carpeta_relativa if ruta_carpeta_relativa else "raiz_directorio"
 
                     for num_pag, pagina in enumerate(doc):
@@ -326,7 +338,6 @@ def indexar_documentos(carpeta_pdfs, metodo_anio="nombre_archivo", tamanio_max_m
                         if texto.strip():
                             texto_procesado = limpiar_texto_basico(texto)
                             if len(texto_procesado) > 5:
-                                # INSERTAMOS EN LA NUEVA ARQUITECTURA
                                 cursor.execute(
                                     "INSERT INTO documentos (ruta, pagina, anio, mtime, carpeta, contenido) VALUES (?, ?, ?, ?, ?, ?)",
                                     (ruta_pdf_relativa, str(num_pag + 1), anio_doc, mtime_actual, carpeta_fts, texto_procesado)
@@ -369,6 +380,12 @@ def indexar_documentos(carpeta_pdfs, metodo_anio="nombre_archivo", tamanio_max_m
     sincronizar_mapa_json()
 
 def buscar_texto(consulta_str, carpetas_permitidas=None, limite=50, offset=0, anio_min=None, anio_max=None, incluir_desconocidos=True, limite_maximo=10000, modo_busqueda="relevancia"):
+    tiempo_inicio = time.time()
+    
+    # --- IMPLEMENTACIÓN DEL KILL SWITCH ---
+    global conexion_busqueda_activa, busqueda_cancelada
+    busqueda_cancelada = False
+    
     if not carpetas_permitidas: return {"total": 0, "resultados": []}
 
     mapa = {}
@@ -421,14 +438,14 @@ def buscar_texto(consulta_str, carpetas_permitidas=None, limite=50, offset=0, an
     tope_conteo = limite_maximo if modo_busqueda == "relevancia" else (offset + limite + 1)
 
     for db_path, filter_folders in dbs_a_consultar.items():
-        if total_hits >= tope_conteo: break 
+        if total_hits >= tope_conteo or busqueda_cancelada: break 
             
         conexion = None
         try:
             conexion = sqlite3.connect(db_path, timeout=10.0)
+            conexion_busqueda_activa = conexion # <- Guardar estado
             cursor = conexion.cursor()
             
-            # MAGIA FTS5 NATIVA: Construimos el query todo dentro de FTS5
             fts_query = consulta_str
             if filter_folders is not None:
                 clausulas_carpeta = []
@@ -438,7 +455,7 @@ def buscar_texto(consulta_str, carpetas_permitidas=None, limite=50, offset=0, an
                 str_carpetas = " OR ".join(clausulas_carpeta)
                 fts_query = f'carpeta : ({str_carpetas}) AND ({consulta_str})'
             
-            query_base = "SELECT count(*) FROM documentos WHERE documentos MATCH ?"
+            query_base = "SELECT count(*) FROM (SELECT 1 FROM documentos WHERE documentos MATCH ?"
             params = [fts_query]
 
             if anio_min is not None and anio_max is not None:
@@ -447,6 +464,9 @@ def buscar_texto(consulta_str, carpetas_permitidas=None, limite=50, offset=0, an
                 else:
                     query_base += " AND (CAST(anio AS INTEGER) >= ? AND CAST(anio AS INTEGER) <= ? AND anio != 'Desconocido')"
                 params.extend([anio_min, anio_max])
+
+            # ¡RECUPERAMOS LA INSTRUCCIÓN LIMIT VITAL!
+            query_base += f" LIMIT {tope_conteo - total_hits})"
 
             cursor.execute(query_base, params)
             count = cursor.fetchone()[0]
@@ -458,17 +478,21 @@ def buscar_texto(consulta_str, carpetas_permitidas=None, limite=50, offset=0, an
             if modo_busqueda == "relevancia" and total_hits > limite_maximo:
                 return {"excede_limite": True, "total": f"+{limite_maximo}", "limite_maximo": limite_maximo}
 
-        except sqlite3.OperationalError as e: return {"error": f"Error FTS5: {e}"}
+        except sqlite3.OperationalError as e:
+            if "interrupted" in str(e).lower():
+                return {"total": 0, "resultados": [], "cancelada": True}
+            return {"error": f"Error FTS5: {e}"}
         finally:
+            conexion_busqueda_activa = None # <- Liberar
             if conexion: conexion.close()
 
-    if total_hits == 0: return {"total": 0, "resultados": []}
+    if total_hits == 0 or busqueda_cancelada: return {"total": 0, "resultados": []}
 
     resultados = []
     offset_restante, limite_restante = offset, limite
 
     for db_info in hits_por_db:
-        if limite_restante <= 0: break 
+        if limite_restante <= 0 or busqueda_cancelada: break 
         if offset_restante >= db_info["count"]:
             offset_restante -= db_info["count"]
             continue
@@ -476,6 +500,7 @@ def buscar_texto(consulta_str, carpetas_permitidas=None, limite=50, offset=0, an
         conexion = None
         try:
             conexion = sqlite3.connect(db_info["db"], timeout=10.0)
+            conexion_busqueda_activa = conexion # <- Guardar estado
             cursor = conexion.cursor()
             
             query_search = '''
@@ -505,8 +530,15 @@ def buscar_texto(consulta_str, carpetas_permitidas=None, limite=50, offset=0, an
 
             limite_restante -= len(filas)
             offset_restante = 0 
-        except Exception: pass 
+        except sqlite3.OperationalError as e:
+            if "interrupted" in str(e).lower():
+                return {"total": 0, "resultados": [], "cancelada": True}
+            pass 
         finally:
+            conexion_busqueda_activa = None # <- Liberar
             if conexion: conexion.close()
 
-    return {"total": total_hits, "resultados": resultados}
+    tiempo_fin = time.time()
+    tiempo_total = round(tiempo_fin - tiempo_inicio, 4)
+    
+    return {"total": total_hits, "resultados": resultados, "tiempo": tiempo_total}
