@@ -57,14 +57,11 @@ def sincronizar_mapa_json():
     with open(RUTA_MAPA, "w", encoding="utf-8") as f:
         json.dump(mapa_nuevo, f, ensure_ascii=False, indent=4)
 
-
 detener_indexacion = False
 
 def obtener_ruta_relativa(ruta_absoluta):
-    try:
-        return os.path.relpath(ruta_absoluta, BASE_DIR)
-    except ValueError:
-        return ruta_absoluta
+    try: return os.path.relpath(ruta_absoluta, BASE_DIR)
+    except ValueError: return ruta_absoluta
 
 def inicializar_db(db_path):
     conexion = sqlite3.connect(db_path, timeout=15.0)
@@ -75,15 +72,15 @@ def inicializar_db(db_path):
     cursor = conexion.cursor()
     cursor.execute('''CREATE TABLE IF NOT EXISTS info_db (clave TEXT PRIMARY KEY, valor TEXT)''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS metadatos_pdf (ruta TEXT PRIMARY KEY, carpeta TEXT, anio TEXT, mtime REAL)''')
-    # Este es el índice acelerador mágico que se creará ahora al reindexar
-    cursor.execute('''CREATE INDEX IF NOT EXISTS idx_carpeta ON metadatos_pdf(carpeta)''')
-
+    
+    # LA MAGIA ESTÁ AQUÍ: Agregamos "carpeta" al índice virtual FTS5
     cursor.execute('''
         CREATE VIRTUAL TABLE IF NOT EXISTS documentos USING fts5(
             ruta UNINDEXED, 
             pagina UNINDEXED, 
             anio UNINDEXED,
             mtime UNINDEXED,
+            carpeta, 
             contenido, 
             tokenize='unicode61 remove_diacritics 1'
         )
@@ -98,38 +95,29 @@ def limpiar_texto_basico(texto):
 def extraer_anio_multifuente(ruta_absoluta, doc, metodo):
     try:
         if metodo == "nombre_archivo":
-            nombre = os.path.basename(ruta_absoluta)
-            match = re.search(r'(18|19|20)\d{2}', nombre)
+            match = re.search(r'(18|19|20)\d{2}', os.path.basename(ruta_absoluta))
             if match: return match.group(0)
         elif metodo == "carpeta":
-            carpeta = os.path.basename(os.path.dirname(ruta_absoluta))
-            match = re.search(r'(18|19|20)\d{2}', carpeta)
+            match = re.search(r'(18|19|20)\d{2}', os.path.basename(os.path.dirname(ruta_absoluta)))
             if match: return match.group(0)
         elif metodo == "metadatos":
             meta = doc.metadata
             if meta and 'creationDate' in meta:
                 match = re.search(r'(18|19|20)\d{2}', meta['creationDate'])
                 if match: return match.group(0)
-    except Exception:
-        pass
+    except Exception: pass
     return "Desconocido"
 
 def obtener_rango_anios():
     archivos_db = glob.glob(os.path.join(INDICES_DIR, "*__part*.db"))
     min_absoluto, max_absoluto = None, None
-
     for db_path in archivos_db:
         conexion = None
         try:
             conexion = sqlite3.connect(db_path, timeout=10.0)
             cursor = conexion.cursor()
-            cursor.execute('''
-                SELECT MIN(CAST(anio AS INTEGER)), MAX(CAST(anio AS INTEGER)) 
-                FROM metadatos_pdf 
-                WHERE anio != 'Desconocido' AND anio IS NOT NULL AND CAST(anio AS INTEGER) > 0
-            ''')
+            cursor.execute('''SELECT MIN(CAST(anio AS INTEGER)), MAX(CAST(anio AS INTEGER)) FROM metadatos_pdf WHERE anio != 'Desconocido' AND anio IS NOT NULL AND CAST(anio AS INTEGER) > 0''')
             res = cursor.fetchone()
-
             if res and res[0] is not None and res[1] is not None:
                 min_db, max_db = int(res[0]), int(res[1])
                 if min_absoluto is None or min_db < min_absoluto: min_absoluto = min_db
@@ -137,19 +125,15 @@ def obtener_rango_anios():
         except sqlite3.OperationalError: pass
         finally:
             if conexion: conexion.close()
-
     return min_absoluto, max_absoluto
 
 def obtener_archivos_ya_indexados_de_carpeta(nombre_base_db):
     archivos_indexados = {}
-    dbs_carpeta = glob.glob(os.path.join(INDICES_DIR, f"{nombre_base_db}__part*.db"))
-    for db_path in dbs_carpeta:
+    for db_path in glob.glob(os.path.join(INDICES_DIR, f"{nombre_base_db}__part*.db")):
         conexion = None
         try:
             conexion = sqlite3.connect(db_path, timeout=10.0)
-            cursor = conexion.cursor()
-            cursor.execute("SELECT ruta, mtime FROM metadatos_pdf")
-            for fila in cursor.fetchall():
+            for fila in conexion.execute("SELECT ruta, mtime FROM metadatos_pdf").fetchall():
                 archivos_indexados[fila[0]] = (float(fila[1]) if fila[1] else 0.0, db_path)
         except sqlite3.OperationalError: pass
         finally:
@@ -158,21 +142,16 @@ def obtener_archivos_ya_indexados_de_carpeta(nombre_base_db):
 
 def obtener_carpetas_unicas():
     info_carpetas = {}
-    archivos_db = glob.glob(os.path.join(INDICES_DIR, "*__part*.db"))
-    
-    for db_path in archivos_db:
+    for db_path in glob.glob(os.path.join(INDICES_DIR, "*__part*.db")):
         conexion = None
         try:
             conexion = sqlite3.connect(db_path, timeout=10.0)
-            cursor = conexion.cursor()
-            cursor.execute("SELECT carpeta, COUNT(*) FROM metadatos_pdf GROUP BY carpeta")
-            for carpeta, cantidad in cursor.fetchall():
+            for carpeta, cantidad in conexion.execute("SELECT carpeta, COUNT(*) FROM metadatos_pdf GROUP BY carpeta").fetchall():
                 carpeta_limpia = carpeta if carpeta else "raiz"
                 info_carpetas[carpeta_limpia] = info_carpetas.get(carpeta_limpia, 0) + cantidad
         except sqlite3.OperationalError: pass
         finally:
             if conexion: conexion.close()
-            
     return dict(sorted(info_carpetas.items()))
 
 def borrar_indice():
@@ -183,21 +162,16 @@ def borrar_indice():
 
 def borrar_indice_carpeta(ruta_carpeta):
     try:
-        archivos_db = glob.glob(os.path.join(INDICES_DIR, "*__part*.db"))
-        for db_path in archivos_db:
+        for db_path in glob.glob(os.path.join(INDICES_DIR, "*__part*.db")):
             conexion = None
             is_empty = False
             try:
                 conexion = sqlite3.connect(db_path, timeout=15.0)
                 cursor = conexion.cursor()
-                
-                if ruta_carpeta == "raiz":
-                    cursor.execute("SELECT ruta FROM metadatos_pdf WHERE carpeta = ''")
-                else:
-                    cursor.execute("SELECT ruta FROM metadatos_pdf WHERE carpeta = ?", (ruta_carpeta,))
+                if ruta_carpeta == "raiz": cursor.execute("SELECT ruta FROM metadatos_pdf WHERE carpeta = ''")
+                else: cursor.execute("SELECT ruta FROM metadatos_pdf WHERE carpeta = ?", (ruta_carpeta,))
                     
                 rutas_a_borrar = [r[0] for r in cursor.fetchall()]
-                
                 if rutas_a_borrar:
                     lote = 500
                     for i in range(0, len(rutas_a_borrar), lote):
@@ -205,22 +179,17 @@ def borrar_indice_carpeta(ruta_carpeta):
                         placeholders = ", ".join(["?"] * len(chunk))
                         cursor.execute(f"DELETE FROM documentos WHERE ruta IN ({placeholders})", chunk)
                         cursor.execute(f"DELETE FROM metadatos_pdf WHERE ruta IN ({placeholders})", chunk)
-                    
                     conexion.commit()
                     conexion.execute("INSERT INTO documentos(documentos) VALUES('optimize');")
                     conexion.commit()
-                
                 cursor.execute("SELECT COUNT(*) FROM metadatos_pdf")
-                if cursor.fetchone()[0] == 0:
-                    is_empty = True
+                if cursor.fetchone()[0] == 0: is_empty = True
             except Exception: pass
             finally:
                 if conexion: conexion.close()
-            
             if is_empty:
                 try: os.remove(db_path)
                 except OSError: pass
-                    
         return True
     except Exception as e: return str(e)
 
@@ -229,18 +198,17 @@ def indexar_documentos(carpeta_pdfs, metodo_anio="nombre_archivo", tamanio_max_m
     detener_indexacion = False 
     archivo_errores = os.path.join(BASE_DIR, "errores_indexacion.txt")
     archivo_mupdf_log = os.path.join(BASE_DIR, "log_pdfs_warnings.txt")
-    
     fitz.TOOLS.mupdf_display_errors(False)
     fitz.TOOLS.mupdf_display_warnings(False)
 
     max_db_size_bytes = tamanio_max_mb * 1024 * 1024 
     ruta_raiz_relativa = obtener_ruta_relativa(os.path.abspath(carpeta_pdfs))
-
     hash_ruta = hashlib.md5(ruta_raiz_relativa.encode('utf-8')).hexdigest()[:8]
     nombre_base_db = f"{os.path.basename(ruta_raiz_relativa.rstrip(os.sep)) or 'raiz'}_{hash_ruta}"
     
     archivos_db_objetivo = glob.glob(os.path.join(INDICES_DIR, f"{nombre_base_db}__part*.db"))
 
+    # Limpieza previa
     for db_path in archivos_db_objetivo:
         if detener_indexacion: break
         conexion = None
@@ -248,29 +216,19 @@ def indexar_documentos(carpeta_pdfs, metodo_anio="nombre_archivo", tamanio_max_m
         try:
             conexion = sqlite3.connect(db_path, timeout=15.0)
             cursor = conexion.cursor()
-            
             cursor.execute("SELECT ruta FROM metadatos_pdf")
-            rutas_db = cursor.fetchall()
-            
-            rutas_a_borrar = []
-            for (ruta_relativa,) in rutas_db:
-                if not os.path.exists(os.path.join(BASE_DIR, ruta_relativa)):
-                    rutas_a_borrar.append((ruta_relativa,))
-            
+            rutas_a_borrar = [(r[0],) for r in cursor.fetchall() if not os.path.exists(os.path.join(BASE_DIR, r[0]))]
             if rutas_a_borrar:
                 cursor.executemany("DELETE FROM documentos WHERE ruta = ?", rutas_a_borrar)
                 cursor.executemany("DELETE FROM metadatos_pdf WHERE ruta = ?", rutas_a_borrar)
                 conexion.commit()
                 conexion.execute("INSERT INTO documentos(documentos) VALUES('optimize');")
                 conexion.commit()
-            
             cursor.execute("SELECT COUNT(*) FROM metadatos_pdf")
             if cursor.fetchone()[0] == 0: is_empty = True
-                
         except sqlite3.OperationalError: pass
         finally:
             if conexion: conexion.close()
-                
         if is_empty:
             try: os.remove(db_path)
             except OSError: pass
@@ -301,17 +259,14 @@ def indexar_documentos(carpeta_pdfs, metodo_anio="nombre_archivo", tamanio_max_m
             if not pdfs_en_raiz: continue
             
             ruta_carpeta_relativa = obtener_ruta_relativa(os.path.abspath(raiz))
-            
             if ruta_carpeta_relativa != ruta_carpeta_actual_en_proceso:
-                if ruta_carpeta_actual_en_proceso != "":
-                    if callback_progreso:
-                        callback_progreso(archivos_procesados, total_pdfs, ruta_carpeta_actual_en_proceso, None, carpeta_terminada=True, total_carpeta=archivos_en_subcarpeta_actual)
+                if ruta_carpeta_actual_en_proceso != "" and callback_progreso:
+                    callback_progreso(archivos_procesados, total_pdfs, ruta_carpeta_actual_en_proceso, None, carpeta_terminada=True, total_carpeta=archivos_en_subcarpeta_actual)
                 ruta_carpeta_actual_en_proceso = ruta_carpeta_relativa
                 archivos_en_subcarpeta_actual = 0 
             
             for archivo in pdfs_en_raiz:
                 if detener_indexacion: break 
-                    
                 archivos_procesados += 1
                 archivos_en_subcarpeta_actual += 1 
                 ruta_absoluta = os.path.abspath(os.path.join(raiz, archivo))
@@ -341,13 +296,10 @@ def indexar_documentos(carpeta_pdfs, metodo_anio="nombre_archivo", tamanio_max_m
                 try:
                     fitz.TOOLS.reset_mupdf_warnings()
                     doc = fitz.open(ruta_absoluta)
-                    
                     alertas_apertura = fitz.TOOLS.mupdf_warnings()
                     if alertas_apertura:
                         with open(archivo_mupdf_log, "a", encoding="utf-8") as f:
-                            mensajes = alertas_apertura.strip().replace('\n', ' | ')
-                            f.write(f"[APERTURA] Archivo: {ruta_absoluta} -> Detalles: {mensajes}\n")
-
+                            f.write(f"[APERTURA] Archivo: {ruta_absoluta} -> Detalles: {alertas_apertura.strip().replace(chr(10), ' | ')}\n")
                     if doc.needs_pass: raise Exception("Protegido con contraseña.")
                     
                     anio_doc = extraer_anio_multifuente(ruta_absoluta, doc, metodo_anio)
@@ -360,22 +312,24 @@ def indexar_documentos(carpeta_pdfs, metodo_anio="nombre_archivo", tamanio_max_m
                         (ruta_pdf_relativa, ruta_carpeta_relativa, anio_doc, mtime_actual)
                     )
                     
+                    # Preparar el nombre de carpeta seguro para FTS5
+                    carpeta_fts = ruta_carpeta_relativa if ruta_carpeta_relativa else "raiz_directorio"
+
                     for num_pag, pagina in enumerate(doc):
                         fitz.TOOLS.reset_mupdf_warnings()
                         texto = pagina.get_text("text")
-                        
                         alertas_pagina = fitz.TOOLS.mupdf_warnings()
                         if alertas_pagina:
                             with open(archivo_mupdf_log, "a", encoding="utf-8") as f:
-                                mensajes = alertas_pagina.strip().replace('\n', ' | ')
-                                f.write(f"[PÁGINA {num_pag + 1}] Archivo: {ruta_absoluta} -> Detalles: {mensajes}\n")
+                                f.write(f"[PÁGINA {num_pag + 1}] Archivo: {ruta_absoluta} -> Detalles: {alertas_pagina.strip().replace(chr(10), ' | ')}\n")
                         
                         if texto.strip():
                             texto_procesado = limpiar_texto_basico(texto)
                             if len(texto_procesado) > 5:
+                                # INSERTAMOS EN LA NUEVA ARQUITECTURA
                                 cursor.execute(
-                                    "INSERT INTO documentos (ruta, pagina, anio, mtime, contenido) VALUES (?, ?, ?, ?, ?)",
-                                    (ruta_pdf_relativa, str(num_pag + 1), anio_doc, mtime_actual, texto_procesado)
+                                    "INSERT INTO documentos (ruta, pagina, anio, mtime, carpeta, contenido) VALUES (?, ?, ?, ?, ?, ?)",
+                                    (ruta_pdf_relativa, str(num_pag + 1), anio_doc, mtime_actual, carpeta_fts, texto_procesado)
                                 )
                     doc.close()
                     archivos_nuevos_en_lote += 1
@@ -384,13 +338,11 @@ def indexar_documentos(carpeta_pdfs, metodo_anio="nombre_archivo", tamanio_max_m
                     if archivos_nuevos_en_lote % lote_size == 0:
                         conexion.commit()
                         sincronizar_mapa_json()
-
                         if os.path.getsize(current_db_path) >= max_db_size_bytes: 
                             conexion.execute("INSERT INTO documentos(documentos) VALUES('optimize');")
                             conexion.commit()
                             conexion.close()
                             conexion = None 
-                            
                             part_num += 1
                             current_db_path = os.path.join(INDICES_DIR, f"{nombre_base_db}__part{part_num}.db")
                             conexion = inicializar_db(current_db_path)
@@ -398,7 +350,6 @@ def indexar_documentos(carpeta_pdfs, metodo_anio="nombre_archivo", tamanio_max_m
                             conexion.execute("INSERT OR IGNORE INTO info_db (clave, valor) VALUES ('ruta_carpeta', ?)", (ruta_raiz_relativa,))
                             conexion.commit()
                             archivos_nuevos_en_lote = 0
-                        
                 except Exception as e_doc:
                     with open(archivo_errores, "a", encoding="utf-8") as f:
                         f.write(f"Archivo: {ruta_absoluta} | Error: {e_doc}\n")
@@ -408,19 +359,14 @@ def indexar_documentos(carpeta_pdfs, metodo_anio="nombre_archivo", tamanio_max_m
             if not detener_indexacion:
                 conexion.execute("INSERT INTO documentos(documentos) VALUES('optimize');")
                 conexion.commit()
-            
-            if ruta_carpeta_actual_en_proceso != "":
-                if callback_progreso:
-                    callback_progreso(archivos_procesados, total_pdfs, ruta_carpeta_actual_en_proceso, None, carpeta_terminada=True, total_carpeta=archivos_en_subcarpeta_actual)
-                
+            if ruta_carpeta_actual_en_proceso != "" and callback_progreso:
+                callback_progreso(archivos_procesados, total_pdfs, ruta_carpeta_actual_en_proceso, None, carpeta_terminada=True, total_carpeta=archivos_en_subcarpeta_actual)
     finally:
         if 'conexion' in locals() and conexion is not None:
             try: conexion.commit()
             except: pass
             conexion.close()
-
     sincronizar_mapa_json()
-
 
 def buscar_texto(consulta_str, carpetas_permitidas=None, limite=50, offset=0, anio_min=None, anio_max=None, incluir_desconocidos=True, limite_maximo=10000, modo_busqueda="relevancia"):
     if not carpetas_permitidas: return {"total": 0, "resultados": []}
@@ -433,45 +379,35 @@ def buscar_texto(consulta_str, carpetas_permitidas=None, limite=50, offset=0, an
         except Exception: pass
 
     dbs_a_consultar = {} 
-
     if mapa:
         db_info_map = {}
         for carpeta_mapa, dbs in mapa.items():
             for db_name, rangos in dbs.items():
-                if db_name not in db_info_map:
-                    db_info_map[db_name] = {}
+                if db_name not in db_info_map: db_info_map[db_name] = {}
                 db_info_map[db_name][carpeta_mapa] = rangos
 
         for db_name, carpetas_dict in db_info_map.items():
             db_path = os.path.join(INDICES_DIR, db_name)
             carpetas_admitidas = []
             todas_admitidas = True
-
             for carpeta_en_db, rangos in carpetas_dict.items():
                 is_allowed = False
                 for c_ui in carpetas_permitidas:
                     if c_ui == "raiz":
                         if "/" not in carpeta_en_db and "\\" not in carpeta_en_db:
-                            is_allowed = True
-                            break
+                            is_allowed = True; break
                     else:
                         if carpeta_en_db == c_ui or carpeta_en_db.startswith(c_ui + "/") or carpeta_en_db.startswith(c_ui + "\\"):
-                            is_allowed = True
-                            break
+                            is_allowed = True; break
 
                 if is_allowed:
                     if anio_min is not None and anio_max is not None and not incluir_desconocidos:
-                        db_min = rangos.get("min")
-                        db_max = rangos.get("max")
+                        db_min, db_max = rangos.get("min"), rangos.get("max")
                         if db_min is not None and db_max is not None and (anio_min <= db_max) and (anio_max >= db_min):
                             carpetas_admitidas.append(carpeta_en_db)
-                        else:
-                            todas_admitidas = False
-                    else:
-                        carpetas_admitidas.append(carpeta_en_db)
-                else:
-                    todas_admitidas = False
-
+                        else: todas_admitidas = False
+                    else: carpetas_admitidas.append(carpeta_en_db)
+                else: todas_admitidas = False
             if carpetas_admitidas:
                 dbs_a_consultar[db_path] = None if todas_admitidas else carpetas_admitidas
     else:
@@ -492,32 +428,18 @@ def buscar_texto(consulta_str, carpetas_permitidas=None, limite=50, offset=0, an
             conexion = sqlite3.connect(db_path, timeout=10.0)
             cursor = conexion.cursor()
             
-            condicion_carpetas_sql = ""
-            params_carpetas = []
-
-            # --- LA OPTIMIZACIÓN TURBO ---
+            # MAGIA FTS5 NATIVA: Construimos el query todo dentro de FTS5
+            fts_query = consulta_str
             if filter_folders is not None:
-                clausulas_in = []
-                clausulas_raiz = []
+                clausulas_carpeta = []
                 for c in filter_folders:
-                    if c == "raiz":
-                        clausulas_raiz.append("(ruta NOT LIKE '%/%' AND ruta NOT LIKE '%\\%')")
-                    else:
-                        clausulas_in.append("(carpeta = ? OR carpeta LIKE ? OR carpeta LIKE ?)")
-                        params_carpetas.extend([c, f"{c}/%", f"{c}\\%"])
-
-                partes_sql = []
-                if clausulas_in:
-                    partes_sql.append(f"ruta IN (SELECT ruta FROM metadatos_pdf WHERE {' OR '.join(clausulas_in)})")
-                if clausulas_raiz:
-                    partes_sql.extend(clausulas_raiz)
-
-                if partes_sql:
-                    condicion_carpetas_sql = " AND (" + " OR ".join(partes_sql) + ")"
-            # -------------------------------
-
-            query_base = f"SELECT count(*) FROM (SELECT 1 FROM documentos WHERE contenido MATCH ?"
-            params = [consulta_str]
+                    c_fts = c if c != "raiz" else "raiz_directorio"
+                    clausulas_carpeta.append(f'"{c_fts}"')
+                str_carpetas = " OR ".join(clausulas_carpeta)
+                fts_query = f'carpeta : ({str_carpetas}) AND ({consulta_str})'
+            
+            query_base = "SELECT count(*) FROM documentos WHERE documentos MATCH ?"
+            params = [fts_query]
 
             if anio_min is not None and anio_max is not None:
                 if incluir_desconocidos:
@@ -525,17 +447,12 @@ def buscar_texto(consulta_str, carpetas_permitidas=None, limite=50, offset=0, an
                 else:
                     query_base += " AND (CAST(anio AS INTEGER) >= ? AND CAST(anio AS INTEGER) <= ? AND anio != 'Desconocido')"
                 params.extend([anio_min, anio_max])
-            
-            query_base += condicion_carpetas_sql
-            params.extend(params_carpetas)
-
-            query_base += f" LIMIT {tope_conteo - total_hits})"
 
             cursor.execute(query_base, params)
             count = cursor.fetchone()[0]
             
             if count > 0:
-                hits_por_db.append({"db": db_path, "count": count, "filters": filter_folders})
+                hits_por_db.append({"db": db_path, "count": count, "fts_query": fts_query})
                 total_hits += count
                 
             if modo_busqueda == "relevancia" and total_hits > limite_maximo:
@@ -562,35 +479,11 @@ def buscar_texto(consulta_str, carpetas_permitidas=None, limite=50, offset=0, an
             cursor = conexion.cursor()
             
             query_search = '''
-                SELECT ruta, pagina, snippet(documentos, 4, '<b>', '</b>', '...', 60), anio 
+                SELECT ruta, pagina, snippet(documentos, 5, '<b>', '</b>', '...', 60), anio 
                 FROM documentos 
-                WHERE contenido MATCH ? 
+                WHERE documentos MATCH ? 
             '''
-            params_search = [consulta_str]
-            filter_folders = db_info["filters"]
-            condicion_carpetas_sql = ""
-            params_carpetas = []
-
-            # --- LA OPTIMIZACIÓN TURBO (Repetida para la extracción) ---
-            if filter_folders is not None:
-                clausulas_in = []
-                clausulas_raiz = []
-                for c in filter_folders:
-                    if c == "raiz":
-                        clausulas_raiz.append("(ruta NOT LIKE '%/%' AND ruta NOT LIKE '%\\%')")
-                    else:
-                        clausulas_in.append("(carpeta = ? OR carpeta LIKE ? OR carpeta LIKE ?)")
-                        params_carpetas.extend([c, f"{c}/%", f"{c}\\%"])
-
-                partes_sql = []
-                if clausulas_in:
-                    partes_sql.append(f"ruta IN (SELECT ruta FROM metadatos_pdf WHERE {' OR '.join(clausulas_in)})")
-                if clausulas_raiz:
-                    partes_sql.extend(clausulas_raiz)
-
-                if partes_sql:
-                    condicion_carpetas_sql = " AND (" + " OR ".join(partes_sql) + ")"
-            # -------------------------------
+            params_search = [db_info["fts_query"]]
             
             if anio_min is not None and anio_max is not None:
                 if incluir_desconocidos:
@@ -598,9 +491,6 @@ def buscar_texto(consulta_str, carpetas_permitidas=None, limite=50, offset=0, an
                 else:
                     query_search += " AND (CAST(anio AS INTEGER) >= ? AND CAST(anio AS INTEGER) <= ? AND anio != 'Desconocido')"
                 params_search.extend([anio_min, anio_max])
-                
-            query_search += condicion_carpetas_sql
-            params_search.extend(params_carpetas)
                 
             if modo_busqueda == "relevancia": query_search += " ORDER BY rank LIMIT ? OFFSET ?"
             else: query_search += " LIMIT ? OFFSET ?"
