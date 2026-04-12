@@ -92,7 +92,7 @@ def inicializar_db(db_path):
         CREATE VIRTUAL TABLE IF NOT EXISTS documentos USING fts5(
             ruta UNINDEXED, 
             pagina UNINDEXED, 
-            anio UNINDEXED,
+            anio,
             mtime UNINDEXED,
             carpeta, 
             contenido, 
@@ -446,27 +446,29 @@ def buscar_texto(consulta_str, carpetas_permitidas=None, limite=50, offset=0, an
             conexion_busqueda_activa = conexion # <- Guardar estado
             cursor = conexion.cursor()
             
-            fts_query = consulta_str
+            # --- NUEVA LÓGICA FTS5 UNIFICADA ---
+            clausulas_match = [f"({consulta_str})"]
+
             if filter_folders is not None:
                 clausulas_carpeta = []
                 for c in filter_folders:
                     c_fts = c if c != "raiz" else "raiz_directorio"
                     clausulas_carpeta.append(f'"{c_fts}"')
                 str_carpetas = " OR ".join(clausulas_carpeta)
-                fts_query = f'carpeta : ({str_carpetas}) AND ({consulta_str})'
-            
-            query_base = "SELECT count(*) FROM (SELECT 1 FROM documentos WHERE documentos MATCH ?"
-            params = [fts_query]
+                clausulas_match.append(f'carpeta : ({str_carpetas})')
 
             if anio_min is not None and anio_max is not None:
+                lista_anios = [str(a) for a in range(anio_min, anio_max + 1)]
                 if incluir_desconocidos:
-                    query_base += " AND ( (CAST(anio AS INTEGER) >= ? AND CAST(anio AS INTEGER) <= ?) OR anio = 'Desconocido' )"
-                else:
-                    query_base += " AND (CAST(anio AS INTEGER) >= ? AND CAST(anio AS INTEGER) <= ? AND anio != 'Desconocido')"
-                params.extend([anio_min, anio_max])
+                    lista_anios.append("desconocido") 
+                str_anios = " OR ".join(lista_anios)
+                clausulas_match.append(f'anio : ({str_anios})')
 
-            # ¡RECUPERAMOS LA INSTRUCCIÓN LIMIT VITAL!
-            query_base += f" LIMIT {tope_conteo - total_hits})"
+            fts_query = " AND ".join(clausulas_match)
+            # -----------------------------------
+            
+            query_base = f"SELECT count(*) FROM (SELECT 1 FROM documentos WHERE documentos MATCH ? LIMIT {tope_conteo - total_hits})"
+            params = [fts_query]
 
             cursor.execute(query_base, params)
             count = cursor.fetchone()[0]
@@ -509,13 +511,6 @@ def buscar_texto(consulta_str, carpetas_permitidas=None, limite=50, offset=0, an
                 WHERE documentos MATCH ? 
             '''
             params_search = [db_info["fts_query"]]
-            
-            if anio_min is not None and anio_max is not None:
-                if incluir_desconocidos:
-                    query_search += " AND ( (CAST(anio AS INTEGER) >= ? AND CAST(anio AS INTEGER) <= ?) OR anio = 'Desconocido' )"
-                else:
-                    query_search += " AND (CAST(anio AS INTEGER) >= ? AND CAST(anio AS INTEGER) <= ? AND anio != 'Desconocido')"
-                params_search.extend([anio_min, anio_max])
                 
             if modo_busqueda == "relevancia": query_search += " ORDER BY rank LIMIT ? OFFSET ?"
             else: query_search += " LIMIT ? OFFSET ?"
