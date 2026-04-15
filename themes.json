@@ -1,0 +1,26 @@
+{
+    "dark": {
+        "nombre": "Oscuro",
+        "modo": "dark",
+        "seed_color": "blue",
+        "color_secundario": "grey400"
+    },
+    "light": {
+        "nombre": "Claro",
+        "modo": "light",
+        "seed_color": "blue",
+        "color_secundario": "grey700"
+    },
+    "hacker": {
+        "nombre": "Terminal",
+        "modo": "dark",
+        "seed_color": "green",
+        
+        "color_fondo": "black",
+        "color_cajas": "#0a1f0a",
+        "color_texto_secundario": "green400",
+        
+        "color_hit_busqueda": "yellow",
+        "radio_bordes": 0
+    }
+}
