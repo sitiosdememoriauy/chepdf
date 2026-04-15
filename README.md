@@ -105,6 +105,22 @@ Este proyecto está bajo la Licencia GNU GPLv3. Eres libre de usar, estudiar, co
 
 ## Historial de Versiones
 
+### v1.7 (Abril 2026)
+* **Actualización de Flet:** Actualización mayor del software al cambiar a Flet 0.84.0 desde 0.28.3.
+* **Modo web y modo escritorio:** Se habilitó la elección del modo de ejecución, entre una aplicación standalone de escritorio y una opción web (esta última para evitar crasheos conocidos de Flet 0.84.0)
+* **Implementación de temas visuales:** Se generó un selector en configuración para elegir el tema visual (claro, oscuro, terminal), customizable agregando valores en themes.json
+  
+### v1.6 (Abril 2026)
+* **Slider de tiempo:** Debug en slider de tiempo.
+  
+### v1.5 (Abril 2026)
+* **Pausa en búsquedas:** Varios ajustes de performance, boton de pausa en búsquedas y kill switch.
+* **Mejora en búsqueda por carpetas:** Se corrigió la búsqueda por carpetas, ahora solo se abren los archivos .db que las contienen.
+  
+### v1.4 (Abril 2026)
+* **Exportación:** Se generó un mecanismo de exportación de resultados a ods.
+* **Busquedas más rápidas:** Se eliminó el uso de búsquedas con LIKE, que estaba provocando demoras en búsquedas grandes.
+
 ### v1.3 (Abril 2026)
 * **Estabilidad Multi-hilo (Anti-Fork Bomb):** Transición al motor asíncrono puro de Flet e implementación de escudos de multiprocesamiento (freeze_support), erradicando la clonación infinita de ventanas al ejecutar el binario en Windows.
 * **Distribución Portable Inteligente:** Nuevo motor de compilación que empaqueta automáticamente el ejecutable, los idiomas y los recursos visuales en una única carpeta maestra (Che_PDF_Portable) lista para distribuir.
