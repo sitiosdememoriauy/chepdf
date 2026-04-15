@@ -1,4 +1,4 @@
-VERSION = "1.6"
+VERSION = "1.7"
 
 import flet as ft
 import motor_sqlite
@@ -15,6 +15,15 @@ import time
 import multiprocessing
 import sys
 import unicodedata
+import asyncio
+import tkinter as tk
+import certifi
+
+# Le indicamos a Python que use los certificados locales de Mozilla
+os.environ['SSL_CERT_FILE'] = certifi.where()
+os.environ['WEBSOCKET_CLIENT_CA_BUNDLE'] = certifi.where()
+
+from tkinter import filedialog
 
 from odf.opendocument import OpenDocumentSpreadsheet
 from odf.table import Table, TableRow, TableCell
@@ -32,13 +41,45 @@ def obtener_idioma_sistema():
         return 'en'
     except Exception: return 'es'
 
+def cargar_temas():
+    import os
+    import sys
+    if getattr(sys, 'frozen', False):
+        ruta_actual = os.path.dirname(sys.executable)
+    else:
+        ruta_actual = os.path.dirname(os.path.abspath(__file__))
+
+    ruta_temas = os.path.join(ruta_actual, "themes.json")
+    
+    temas_default = {
+        "dark": {"nombre": "Oscuro", "modo": "dark", "seed_color": "blue"},
+        "light": {"nombre": "Claro", "modo": "light", "seed_color": "blue"}
+    }
+    
+    if os.path.exists(ruta_temas):
+        import json
+        try:
+            with open(ruta_temas, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e: 
+            print(f"\n⚠️ ATENCIÓN: Se encontró themes.json pero falló la lectura. Error: {e}\n")
+    else:
+        print(f"\n⚠️ ATENCIÓN: No existe el archivo en la ruta: {ruta_temas}\n")
+            
+    return temas_default
+
+# Cargamos el diccionario a la memoria global
+diccionario_temas = cargar_temas()
+
 def cargar_config():
     config_default = {
         "metodo_anio": "nombre_archivo", 
         "limite_resultados": 1000,
         "idioma": obtener_idioma_sistema(),
         "tamanio_max_db": 2048,
-        "modo_busqueda": "rapida"
+        "modo_busqueda": "rapida",
+        "modo_visualizacion": "web",
+        "tema_visual": "dark"
     }
     if os.path.exists(CONFIG_FILE):
         try:
@@ -60,35 +101,72 @@ def cargar_idioma(codigo_idioma):
     except FileNotFoundError: return {}
 
 def main(page: ft.Page):
-    # --- INTERCEPTOR DE CIERRE SEGURO ---
-    page.window.prevent_close = True
+    async def al_desconectar(e):
+        # Aseguramos que los procesos pesados se detengan
+        motor_sqlite.detener_indexacion = True
+        motor_sqlite.detener_busqueda()
+        
+        # Un pequeño respiro para que los hilos cierren archivos si es necesario
+        await asyncio.sleep(0.5)
+        
+        # Matamos el proceso para devolver el control al prompt
+        os._exit(0)
 
-    def al_cerrar_ventana(e):
-        if e.data == "close":
-            # Disparamos los kill switches de motor_sqlite antes de salir
-            motor_sqlite.detener_indexacion = True
-            motor_sqlite.detener_busqueda()
-            time.sleep(0.1) # Damos un respiro al SO para que cierre los archivos
-            page.window.destroy()
-
-    page.window.on_event = al_cerrar_ventana
-    # ------------------------------------
+    page.on_disconnect = al_desconectar
+    # ----------------------------------------------------
 
     config_app = cargar_config()
-    diccionario_textos = cargar_idioma(config_app.get("idioma", "es"))
+    
+    # --- APLICAR TEMA AL INICIO ---
+    tema_guardado = config_app.get("tema_visual", "dark")
+    tema_info = diccionario_temas.get(tema_guardado, diccionario_temas["dark"])
+    
+    page.theme_mode = ft.ThemeMode.DARK if tema_info["modo"] == "dark" else ft.ThemeMode.LIGHT
+    page.theme = ft.Theme(color_scheme_seed=tema_info["seed_color"])
+    # ------------------------------
 
+    page.window.prevent_close = True
+
+    async def al_cerrar_ventana(e):
+        evento_str = f"{getattr(e, 'data', '')} {getattr(e, 'type', '')}".lower()
+        
+        if "close" in evento_str:
+            motor_sqlite.detener_indexacion = True
+            motor_sqlite.detener_busqueda()
+            
+            if not page.web:
+                page.window.prevent_close = False
+                page.window.visible = False
+                page.update()
+                
+                try:
+                    await page.window.close() 
+                except Exception:
+                    pass
+                
+                await asyncio.sleep(0.1)
+                os._exit(0)
+            else:
+                try:
+                    await page.window.close()
+                except Exception:
+                    pass
+
+    page.window.on_event = al_cerrar_ventana
+
+    diccionario_textos = cargar_idioma(config_app.get("idioma", "es"))
     def t(clave): return diccionario_textos.get(clave, clave)
 
     page.title = t("app_titulo")
     page.window.icon = "icono_che.ico" 
-    page.theme_mode = "dark"
     page.padding = 10 
     
     estado_busqueda = {"pagina_actual": 1, "resultados_por_pagina": 50, "total_paginas": 1}
     estado_app = {"hilo_indexacion": None, "mostrar_rutas": False}
 
-    txt_estado_indexacion = ft.Text(t("estado_reposo"), italic=True, color="blue300", size=13)
-    txt_estado_busqueda = ft.Text("", italic=True, color="grey400", size=13)
+    # CAMBIO A COLORES SEMÁNTICOS
+    txt_estado_indexacion = ft.Text(t("estado_reposo"), italic=True, color="primary", size=13)
+    txt_estado_busqueda = ft.Text("", italic=True, color="onSurfaceVariant", size=13)
 
     lista_checkboxes = ft.ListView(expand=True, spacing=5)
     txt_rango_anios = ft.Text(t("lbl_filtro_temporal_calc"), weight="bold", size=16)
@@ -99,7 +177,7 @@ def main(page: ft.Page):
 
     slider_anios = ft.RangeSlider(
         min=1900, max=2030, start_value=1900, end_value=2030, divisions=130, label="{value}",
-        disabled=True, on_change=on_slider_change, active_color="blue400", inactive_color="grey800"
+        disabled=True, on_change=on_slider_change, active_color="primary", inactive_color="surfaceVariant"
     )
     
     check_desconocidos = ft.Checkbox(label=t("lbl_incluir_sin_ano"), value=False, disabled=True)
@@ -155,22 +233,31 @@ def main(page: ft.Page):
         motor_sqlite.detener_indexacion = True
         txt_estado_indexacion.value = t("msg_deteniendo_segura")
         btn_detener.disabled = True
-        btn_detener.icon_color = "grey500" 
+        btn_detener.icon_color = "onSurfaceVariant" 
         page.update()
 
-    btn_detener = ft.IconButton(icon="stop", icon_color="grey500", icon_size=30, tooltip=t("tooltip_detener_index"), disabled=True, on_click=detener_proceso)
+    btn_detener = ft.IconButton(icon=ft.Icons.STOP, icon_color="onSurfaceVariant", icon_size=30, tooltip=t("tooltip_detener_index"), disabled=True, on_click=detener_proceso)
 
-    def on_carpeta_seleccionada(e: ft.FilePickerResultEvent):
-        if e.path:
+    def abrir_dialogo_carpeta_nativo(e):
+        root = tk.Tk()
+        root.withdraw() 
+        root.attributes('-topmost', True) 
+        
+        ruta = filedialog.askdirectory(title="Selecciona la carpeta a indexar")
+        root.destroy() 
+        
+        if ruta:
             def tarea_indexar():
-                nombre_carpeta = os.path.basename(e.path)
+                nombre_carpeta = os.path.basename(ruta)
                 txt_estado_indexacion.value = t("msg_calculando_archivos").format(nombre_carpeta)
                 
                 btn_indexar.disabled = True
+                btn_indexar.icon_color = "onSurfaceVariant"  
+                
                 btn_borrar_indice.disabled = True 
-                btn_borrar_indice.icon_color = "grey500" 
+                btn_borrar_indice.icon_color = "onSurfaceVariant" 
                 btn_detener.disabled = False
-                btn_detener.icon_color = "red400"        
+                btn_detener.icon_color = "error"        
                 page.update()
                 
                 def actualizar_interfaz(actual, total, ruta_carpeta_relativa, anio_doc=None, carpeta_terminada=False, total_carpeta=0):
@@ -211,39 +298,40 @@ def main(page: ft.Page):
                     if actual % 10 == 0 or actual == total: page.update()
                 
                 motor_sqlite.indexar_documentos(
-                    e.path, 
+                    ruta, 
                     metodo_anio=config_app.get("metodo_anio", "nombre_archivo"), 
                     tamanio_max_mb=config_app.get("tamanio_max_db", 1024),
                     callback_progreso=actualizar_interfaz
                 )
                 
-                if motor_sqlite.detener_indexacion:
-                    txt_estado_indexacion.value = t("msg_deteniendo_interfaz")
-                    page.update()
-                
-                actualizar_filtros_ui() 
-                
                 if motor_sqlite.detener_indexacion: txt_estado_indexacion.value = t("msg_indexacion_abortada")
                 else: txt_estado_indexacion.value = t("msg_index_exito").format(nombre_carpeta)
                 
                 btn_indexar.disabled = False
+                btn_indexar.icon_color = "primary"
+                
                 btn_borrar_indice.disabled = False 
-                btn_borrar_indice.icon_color = "red400" 
+                btn_borrar_indice.icon_color = "error" 
                 btn_detener.disabled = True
-                btn_detener.icon_color = "grey500" 
-                actualizar_filtros_ui() 
+                btn_detener.icon_color = "onSurfaceVariant" 
+                actualizar_filtros_ui()
                 
             estado_app["hilo_indexacion"] = threading.Thread(target=tarea_indexar, daemon=True)
             estado_app["hilo_indexacion"].start()
 
-    selector_carpetas = ft.FilePicker(on_result=on_carpeta_seleccionada)
-    page.overlay.append(selector_carpetas)
+    btn_indexar = ft.IconButton(
+        icon=ft.Icons.CREATE_NEW_FOLDER, 
+        icon_size=30, 
+        icon_color="primary", 
+        tooltip=t("tooltip_indexar_carpeta"), 
+        on_click=abrir_dialogo_carpeta_nativo
+    )
 
     texto_advertencia = ft.Text("")
     dropdown_borrar = ft.Dropdown(label=t("lbl_que_deseas_borrar"), options=[], width=350)
     check_confirmacion = ft.Checkbox(label=t("lbl_accion_irreversible"))
-    btn_confirmar_borrado = ft.TextButton(t("btn_borrar"), style=ft.ButtonStyle(color="red400"), disabled=True)
-    btn_cancelar_borrado = ft.TextButton(t("btn_cancelar"), on_click=lambda e: cerrar_dialogo())
+    btn_confirmar_borrado = ft.TextButton(content=ft.Text(t("btn_borrar")), style=ft.ButtonStyle(color="error"), disabled=True)
+    btn_cancelar_borrado = ft.TextButton(content=ft.Text(t("btn_cancelar")), on_click=lambda e: cerrar_dialogo())
 
     def on_checkbox_change(e):
         btn_confirmar_borrado.disabled = not check_confirmacion.value
@@ -251,7 +339,7 @@ def main(page: ft.Page):
     check_confirmacion.on_change = on_checkbox_change
 
     def cerrar_dialogo(e=None):
-        page.close(dlg_borrar)
+        dlg_borrar.open = False
         page.update()
 
     def ejecutar_borrado(e):
@@ -264,7 +352,8 @@ def main(page: ft.Page):
             resultado = motor_sqlite.borrar_indice_carpeta(seleccion)
             msj = t("msg_indice_borrado_carpeta").format(seleccion)
         
-        page.close(dlg_borrar)
+        dlg_borrar.open = False
+        
         if resultado is True:
             txt_estado_indexacion.value = msj
             actualizar_filtros_ui() 
@@ -272,7 +361,9 @@ def main(page: ft.Page):
             fila_paginador.visible = False
             contenedor_cargar_mas.visible = False
             btn_exportar.visible = False 
-        else: txt_estado_indexacion.value = t("msg_error_borrado").format(resultado)
+        else: 
+            txt_estado_indexacion.value = t("msg_error_borrado").format(resultado)
+            
         page.update()
 
     btn_confirmar_borrado.on_click = ejecutar_borrado
@@ -303,12 +394,13 @@ def main(page: ft.Page):
             check_confirmacion.value = False
             btn_confirmar_borrado.visible = True
             btn_confirmar_borrado.disabled = True
-        page.open(dlg_borrar)
+            
+        page.show_dialog(dlg_borrar)
         page.update()
 
-    btn_salir = ft.ElevatedButton(t("btn_salir"), icon="exit_to_app")
+    btn_salir = ft.Button(content=ft.Text(t("btn_salir")), icon=ft.Icons.EXIT_TO_APP)
 
-    def salir_app(e):
+    async def salir_app(e):
         hilo = estado_app["hilo_indexacion"]
         if hilo and hilo.is_alive():
             motor_sqlite.detener_indexacion = True
@@ -319,23 +411,38 @@ def main(page: ft.Page):
             btn_salir.disabled = True
             page.update()
             hilo.join(timeout=2)
-        page.window.close()
+            
+        if page.web:
+            txt_estado_indexacion.value = "Sistema desconectado. Ya puedes cerrar esta pestaña con seguridad."
+            page.update()
+        else:
+            page.window.prevent_close = False
+            page.window.visible = False
+            page.update()
+            
+            try:
+                await page.window.close()
+            except Exception:
+                pass
+                
+            await asyncio.sleep(0.1)
+            os._exit(0)
+
     btn_salir.on_click = salir_app
 
-    btn_indexar = ft.IconButton(icon="create_new_folder", icon_size=30, tooltip=t("tooltip_indexar_carpeta"), on_click=lambda _: selector_carpetas.get_directory_path())
-    btn_borrar_indice = ft.IconButton(icon="delete_forever", icon_size=30, icon_color="red400", tooltip=t("tooltip_borrar_indice"), on_click=abrir_dialogo_borrado)
+    btn_borrar_indice = ft.IconButton(icon=ft.Icons.DELETE_FOREVER, icon_size=30, icon_color="error", tooltip=t("tooltip_borrar_indice"), on_click=abrir_dialogo_borrado)
 
     def alternar_vista_rutas(e):
         estado_app["mostrar_rutas"] = not estado_app["mostrar_rutas"]
-        e.control.icon = "visibility" if estado_app["mostrar_rutas"] else "visibility_off"
+        e.control.icon = ft.Icons.VISIBILITY if estado_app["mostrar_rutas"] else ft.Icons.VISIBILITY_OFF
         e.control.tooltip = t("tooltip_ocultar_rutas") if estado_app["mostrar_rutas"] else t("tooltip_mostrar_rutas")
         actualizar_filtros_ui()
-    btn_alternar_vista = ft.IconButton(icon="visibility_off", tooltip=t("tooltip_mostrar_rutas"), on_click=alternar_vista_rutas)
+    btn_alternar_vista = ft.IconButton(icon=ft.Icons.VISIBILITY_OFF, tooltip=t("tooltip_mostrar_rutas"), on_click=alternar_vista_rutas)
 
     txt_lbl_indexar_carpetas = ft.Text(t("lbl_indexar_carpetas"), weight="bold", size=16)
     txt_lbl_filtro_carpetas = ft.Text(t("lbl_filtro_carpetas"), weight="bold", size=16)
-    btn_todas = ft.TextButton(t("btn_todas"), on_click=seleccionar_todas)
-    btn_ninguna = ft.TextButton(t("btn_ninguna"), on_click=deseleccionar_todas)
+    btn_todas = ft.TextButton(content=ft.Text(t("btn_todas")), on_click=seleccionar_todas)
+    btn_ninguna = ft.TextButton(content=ft.Text(t("btn_ninguna")), on_click=deseleccionar_todas)
 
     barra_lateral = ft.Container(
         width=250, clip_behavior=ft.ClipBehavior.HARD_EDGE,
@@ -348,21 +455,15 @@ def main(page: ft.Page):
     )
 
     def mover_divisor(e: ft.DragUpdateEvent):
-        nuevo_ancho = barra_lateral.width + e.delta_x
-        if 150 <= nuevo_ancho <= 600:
+        nuevo_ancho = barra_lateral.width + e.local_delta.x
+        if 150 <= nuevo_ancho <= 600: 
             barra_lateral.width = nuevo_ancho
             page.update()
 
     divisor_movil = ft.GestureDetector(
         mouse_cursor=ft.MouseCursor.RESIZE_COLUMN, on_pan_update=mover_divisor,
-        content=ft.Container(width=10, bgcolor="transparent", content=ft.VerticalDivider(width=1, color="white24"))
+        content=ft.Container(width=10, bgcolor="transparent", content=ft.VerticalDivider(width=1, color="outlineVariant"))
     )
-
-    def on_exportar_result(e: ft.FilePickerResultEvent):
-        if e.path: exportar_resultados_ods(e.path)
-
-    export_picker = ft.FilePicker(on_result=on_exportar_result)
-    page.overlay.append(export_picker)
 
     def sanitizar_nombre(texto):
         texto_limpio = unicodedata.normalize('NFKD', str(texto)).encode('ASCII', 'ignore').decode('utf-8')
@@ -371,13 +472,29 @@ def main(page: ft.Page):
         texto_limpio = texto_limpio[:10].strip('-')
         return texto_limpio if texto_limpio else "export"
 
-    def abrir_dialogo_exportar(e):
+    def abrir_dialogo_exportar_nativo(e):
         datos = btn_exportar.data
         if not datos: return
+        
         palabra_saneada = sanitizar_nombre(datos["consulta"])
         total_hits = datos["total"]
         nombre_sugerido = f"chepdf-{palabra_saneada}-{total_hits}.ods"
-        export_picker.save_file(dialog_title="Guardar resultados como...", file_name=nombre_sugerido, allowed_extensions=["ods"])
+        
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes('-topmost', True) 
+        
+        ruta_destino = filedialog.asksaveasfilename(
+            title="Guardar resultados como...",
+            initialfile=nombre_sugerido,
+            defaultextension=".ods",
+            filetypes=[("OpenDocument Spreadsheet", "*.ods")]
+        )
+        
+        root.destroy()
+        
+        if ruta_destino: 
+            exportar_resultados_ods(ruta_destino)
 
     def exportar_resultados_ods(ruta_destino):
         txt_estado_busqueda.value = t("msg_calculando_resultados") if "msg_calculando_resultados" in diccionario_textos else "Exportando resultados, por favor espera..."
@@ -450,41 +567,39 @@ def main(page: ft.Page):
             txt_estado_busqueda.value = f"¡Exportación exitosa! {len(respuesta.get('resultados', []))} resultados guardados en ODS."
         except Exception as ex:
             txt_estado_busqueda.value = f"Error al exportar: {ex}"
-            txt_estado_busqueda.color = "red400"
+            txt_estado_busqueda.color = "error"
             
         btn_exportar.disabled = False
         page.update()
 
-    btn_exportar = ft.ElevatedButton(
-        t("btn_exportar") if "btn_exportar" in diccionario_textos else "Exportar ODS", 
-        icon="table_view", visible=False, on_click=abrir_dialogo_exportar
+    btn_exportar = ft.Button(
+        content=ft.Text(t("btn_exportar") if "btn_exportar" in diccionario_textos else "Exportar ODS"), 
+        icon=ft.Icons.TABLE_VIEW, visible=False, on_click=abrir_dialogo_exportar_nativo
     )
 
     txt_busqueda = ft.TextField(label=t("lbl_buscar_ejemplo"), expand=True, on_submit=lambda e: ejecutar_busqueda(nueva_busqueda=True))
-    btn_buscar = ft.ElevatedButton(t("btn_buscar"), icon="search", on_click=lambda e: ejecutar_busqueda(nueva_busqueda=True))
+    btn_buscar = ft.Button(content=ft.Text(t("btn_buscar")), icon=ft.Icons.SEARCH, on_click=lambda e: ejecutar_busqueda(nueva_busqueda=True))
     
-    # --- BOTÓN DE DETENER BÚSQUEDA ---
     btn_detener_busqueda = ft.IconButton(
-        icon="stop_circle", 
-        icon_color="red400", 
+        icon=ft.Icons.STOP_CIRCLE, 
+        icon_color="error", 
         icon_size=30,
         visible=False,
         tooltip="Detener búsqueda",
         on_click=lambda e: motor_sqlite.detener_busqueda()
     )
-    # ---------------------------------
     
     lista_resultados = ft.ListView(expand=True, spacing=10, padding=10)
-    btn_anterior = ft.ElevatedButton(t("btn_anterior"), icon="arrow_back", on_click=lambda e: cambiar_pagina(-1))
-    btn_siguiente = ft.ElevatedButton(t("btn_siguiente"), icon="arrow_forward", on_click=lambda e: cambiar_pagina(1))
+    btn_anterior = ft.Button(content=ft.Text(t("btn_anterior")), icon=ft.Icons.ARROW_BACK, on_click=lambda e: cambiar_pagina(-1))
+    btn_siguiente = ft.Button(content=ft.Text(t("btn_siguiente")), icon=ft.Icons.ARROW_FORWARD, on_click=lambda e: cambiar_pagina(1))
     txt_paginacion = ft.Text(t("lbl_pagina_1_de_1"), weight="bold")
-    fila_paginador = ft.Row(controls=[btn_anterior, txt_paginacion, btn_siguiente], alignment="center", visible=False)
+    fila_paginador = ft.Row(controls=[btn_anterior, txt_paginacion, btn_siguiente], alignment=ft.MainAxisAlignment.CENTER, visible=False)
 
-    btn_cargar_mas = ft.ElevatedButton(
-        t("btn_cargar_mas") if "btn_cargar_mas" in diccionario_textos else "Cargar más resultados...", 
-        icon="downloading", on_click=lambda e: cambiar_pagina(1), style=ft.ButtonStyle(bgcolor="blue800", color="white")
+    btn_cargar_mas = ft.Button(
+        content=ft.Text(t("btn_cargar_mas") if "btn_cargar_mas" in diccionario_textos else "Cargar más resultados..."), 
+        icon=ft.Icons.DOWNLOADING, on_click=lambda e: cambiar_pagina(1), style=ft.ButtonStyle(bgcolor="primary", color="onPrimary")
     )
-    contenedor_cargar_mas = ft.Row([btn_cargar_mas], alignment="center", visible=False)
+    contenedor_cargar_mas = ft.Row([btn_cargar_mas], alignment=ft.MainAxisAlignment.CENTER, visible=False)
 
     def abrir_pdf(ruta_guardada, pagina, termino_busqueda=""):
         if not os.path.isabs(ruta_guardada): ruta_real = os.path.join(motor_sqlite.BASE_DIR, ruta_guardada)
@@ -498,9 +613,13 @@ def main(page: ft.Page):
             html_path = os.path.join(temp_dir, "puente_visor_forense.html")
             texto_abriendo = t("msg_abriendo_html").format(pagina)
             
+            # --- TEMA DINÁMICO PARA EL HTML PUENTE ---
+            bg_color = "#ffffff" if page.theme_mode == ft.ThemeMode.LIGHT else "#1e1e1e"
+            txt_color = "#1e1e1e" if page.theme_mode == ft.ThemeMode.LIGHT else "#ffffff"
+            
             with open(html_path, "w", encoding="utf-8") as f:
                 f.write(f'''<!DOCTYPE html><html><head><meta http-equiv="refresh" content="0; url={url_final}"></head>
-                <body style="background-color: #1e1e1e; color: #ffffff; display: flex; justify-content: center; align-items: center; height: 100vh;">
+                <body style="background-color: {bg_color}; color: {txt_color}; display: flex; justify-content: center; align-items: center; height: 100vh;">
                     <h2>{texto_abriendo}</h2>
                     <script>window.focus();</script>
                 </body></html>''')
@@ -524,12 +643,11 @@ def main(page: ft.Page):
         if nueva_busqueda or modo_actual == "relevancia": lista_resultados.controls.clear()
             
         txt_estado_busqueda.value = t("msg_calculando_resultados")
-        txt_estado_busqueda.color = "grey400"
+        txt_estado_busqueda.color = "onSurfaceVariant"
         fila_paginador.visible = False
         contenedor_cargar_mas.visible = False
         btn_exportar.visible = False 
         
-        # --- ACTIVAMOS EL MODO VISUAL DE BÚSQUEDA ---
         btn_buscar.visible = False
         btn_detener_busqueda.visible = True
         page.update()
@@ -555,26 +673,25 @@ def main(page: ft.Page):
             limite_maximo=limite_max, modo_busqueda=modo_actual
         )
 
-        # --- RECUPERAMOS EL BOTÓN BUSCAR ---
         btn_buscar.visible = True
         btn_detener_busqueda.visible = False
 
         if respuesta.get("cancelada"):
             txt_estado_busqueda.value = "Búsqueda cancelada por el usuario."
-            txt_estado_busqueda.color = "orange400"
+            txt_estado_busqueda.color = "error"
             page.update()
             return
 
         if "error" in respuesta:
             txt_estado_busqueda.value = t("msg_error_sintaxis")
-            txt_estado_busqueda.color = "red400"
+            txt_estado_busqueda.color = "error"
             btn_exportar.visible = False
             page.update()
             return
             
         if respuesta.get("excede_limite"):
             txt_estado_busqueda.value = t("msg_limite_excedido").format(limite_max, respuesta['total'])
-            txt_estado_busqueda.color = "orange400"
+            txt_estado_busqueda.color = "error"
             btn_exportar.visible = False
             page.update()
             return
@@ -582,10 +699,10 @@ def main(page: ft.Page):
         total_hits = respuesta["total"]
         if total_hits == 0:
             txt_estado_busqueda.value = t("msg_sin_resultados")
-            txt_estado_busqueda.color = "grey400"
+            txt_estado_busqueda.color = "onSurfaceVariant"
             btn_exportar.visible = False
         else:
-            txt_estado_busqueda.color = "grey400"
+            txt_estado_busqueda.color = "onSurfaceVariant"
             btn_exportar.visible = True
             btn_exportar.data = {"consulta": consulta, "total": total_hits}
             estado_busqueda["total_paginas"] = math.ceil(total_hits / estado_busqueda["resultados_por_pagina"])
@@ -608,19 +725,18 @@ def main(page: ft.Page):
                 fragmentos = re.split(r'(<b>.*?</b>)', f"...{res['extracto']}...")
                 spans_extracto = []
                 for frag in fragmentos:
-                    if frag.startswith('<b>') and frag.endswith('</b>'): spans_extracto.append(ft.TextSpan(frag[3:-4], style=ft.TextStyle(color="red400", weight="bold")))
+                    if frag.startswith('<b>') and frag.endswith('</b>'): spans_extracto.append(ft.TextSpan(frag[3:-4], style=ft.TextStyle(color="error", weight="bold")))
                     else: spans_extracto.append(ft.TextSpan(frag))
                 
                 etiqueta_anio = t("lbl_ano_con_valor").format(res['anio']) if res['anio'] and res['anio'] != "Desconocido" else t("lbl_ano_desconocido")
-                btn_abrir = ft.TextButton(text=t("btn_abrir_pdf").format(os.path.basename(res['ruta']), etiqueta_anio, res['pagina']), on_click=lambda e, r=res['ruta'], p=res['pagina'], q=consulta: abrir_pdf(r, p, q))
-                tarjeta = ft.Card(content=ft.Container(padding=15, content=ft.Column([btn_abrir, ft.Text(res['ruta'], size=10, color="grey500"), ft.Divider(height=1), ft.Text(spans=spans_extracto)])))
+                btn_abrir = ft.TextButton(content=ft.Text(t("btn_abrir_pdf").format(os.path.basename(res['ruta']), etiqueta_anio, res['pagina'])), on_click=lambda e, r=res['ruta'], p=res['pagina'], q=consulta: abrir_pdf(r, p, q))
+                tarjeta = ft.Card(content=ft.Container(padding=15, content=ft.Column([btn_abrir, ft.Text(res['ruta'], size=10, color="onSurfaceVariant"), ft.Divider(height=1), ft.Text(spans=spans_extracto)])))
                 lista_resultados.controls.append(tarjeta)
         page.update()
 
-    panel_estado_sistema = ft.Container(content=ft.Row([ft.Icon("info_outline", size=16, color="blue300"), txt_estado_indexacion]), padding=ft.padding.only(bottom=5, top=5))
+    panel_estado_sistema = ft.Container(content=ft.Row([ft.Icon(ft.Icons.INFO_OUTLINE, size=16, color="primary"), txt_estado_indexacion]), padding=ft.Padding.only(bottom=5, top=5))
 
     area_busqueda = ft.Column([
-        # --- AÑADIMOS EL BOTÓN DETENER AL ROW DE LA BÚSQUEDA ---
         ft.Row([txt_busqueda, btn_buscar, btn_detener_busqueda, btn_exportar]), 
         panel_estado_sistema,
         txt_estado_busqueda,
@@ -629,17 +745,50 @@ def main(page: ft.Page):
         contenedor_cargar_mas
     ], expand=True)
 
+    btn_salir.style = ft.ButtonStyle(color="error")
+
+    span_desarrollo = ft.TextSpan(t("lbl_un_desarrollo_de"), style=ft.TextStyle(size=12, color="onSurfaceVariant"))
+
     encabezado = ft.Row([
-        ft.Image(src="icono_che.png", width=60, height=60, fit=ft.ImageFit.CONTAIN),
-        ft.Column([
-            ft.Row(controls=[ft.Text("Che PDF", size=28, weight="w800"), ft.Text(f"v{VERSION}", size=14, color="grey500", weight="w500") ], alignment=ft.MainAxisAlignment.START, vertical_alignment=ft.CrossAxisAlignment.END, spacing=8),
-            ft.Text(spans=[ft.TextSpan(t("lbl_un_desarrollo_de"), style=ft.TextStyle(size=12, color="grey400")), ft.TextSpan("sitiosdememoria.uy", url="https://sitiosdememoria.uy", style=ft.TextStyle(size=12, color="blue300", decoration=ft.TextDecoration.UNDERLINE))])
-        ], spacing=2),
-    ], alignment=ft.MainAxisAlignment.START, vertical_alignment=ft.CrossAxisAlignment.CENTER)
+        # --- LADO IZQUIERDO: Logo y Títulos ---
+        ft.Row([
+            ft.Image(src="icono_che.png", width=60, height=60, fit=ft.BoxFit.CONTAIN),
+            ft.Column([
+                ft.Row(controls=[ft.Text("Che PDF", size=28, weight="w800"), ft.Text(f"v{VERSION}", size=14, color="onSurfaceVariant", weight="w500") ], alignment=ft.MainAxisAlignment.START, vertical_alignment=ft.CrossAxisAlignment.END, spacing=8),
+                # 2. Usamos la variable aquí
+                ft.Text(spans=[span_desarrollo, ft.TextSpan("sitiosdememoria.uy", url="https://sitiosdememoria.uy", style=ft.TextStyle(size=12, color="primary", decoration=ft.TextDecoration.UNDERLINE))])
+            ], spacing=2),
+        ]),
+        
+        # --- EL RESORTE INVISIBLE ---
+        ft.Container(expand=True)
+        
+    ], vertical_alignment=ft.CrossAxisAlignment.CENTER)
 
-    contenedor_principal = ft.Container(content=ft.Row([barra_lateral, divisor_movil, area_busqueda]), expand=True, padding=ft.padding.only(top=10))
+    contenedor_principal = ft.Container(content=ft.Row([barra_lateral, divisor_movil, area_busqueda]), expand=True, padding=ft.Padding.only(top=10))
 
-    dropdown_idioma = ft.Dropdown(label=t("lbl_idioma"), value=config_app.get("idioma", "es"), options=[ft.dropdown.Option("es", t("lbl_espanol")), ft.dropdown.Option("en", t("lbl_ingles"))], width=300)
+    def cambiar_idioma_inmediato(e):
+        idioma_nuevo = dropdown_idioma.value
+        if config_app.get("idioma") != idioma_nuevo:
+            config_app["idioma"] = idioma_nuevo
+            guardar_config(config_app)
+            
+            diccionario_textos.clear()
+            diccionario_textos.update(cargar_idioma(idioma_nuevo))
+            
+            aplicar_traduccion_al_vuelo()
+
+    dropdown_idioma = ft.Dropdown(
+        label=t("lbl_idioma"), 
+        value=config_app.get("idioma", "es"), 
+        options=[
+            ft.dropdown.Option("es", t("lbl_espanol")), 
+            ft.dropdown.Option("en", t("lbl_ingles"))
+        ], 
+        width=300,
+        on_select=cambiar_idioma_inmediato  
+    )
+
     radio_metodo_anio = ft.RadioGroup(value=config_app.get("metodo_anio", "nombre_archivo"), content=ft.Column([ft.Radio(value="nombre_archivo", label=t("opt_metodo_nombre")), ft.Radio(value="carpeta", label=t("opt_metodo_carpeta")), ft.Radio(value="metadatos", label=t("opt_metodo_metadatos"))]))
     txt_lbl_modo_busqueda = ft.Text(t("lbl_modo_busqueda") if "lbl_modo_busqueda" in diccionario_textos else "Modo de Búsqueda", weight="bold", size=18)
     
@@ -654,94 +803,378 @@ def main(page: ft.Page):
     
     dropdown_tamanio_db = ft.Dropdown(label=t("lbl_tamanio_db"), value=str(config_app.get("tamanio_max_db", 2048)), options=[ft.dropdown.Option("500", t("opt_500mb")), ft.dropdown.Option("1024", t("opt_1gb")), ft.dropdown.Option("2048", t("opt_2gb")), ft.dropdown.Option("4096", t("opt_4gb"))], width=350)
 
+    txt_lbl_modo_visual = ft.Text(t("lbl_modo_visual") if "lbl_modo_visual" in diccionario_textos else "Modo de Visualización (Requiere reiniciar la app)", weight="bold", size=18)
+    
+    radio_modo_visual = ft.RadioGroup(
+        value=config_app.get("modo_visualizacion", "web"), 
+        content=ft.Column([
+            ft.Radio(value="web", label=t("opt_visual_web") if "opt_visual_web" in diccionario_textos else "Navegador Web (Seguro / Máxima compatibilidad)"), 
+            ft.Radio(value="escritorio", label=t("opt_visual_escritorio") if "opt_visual_escritorio" in diccionario_textos else "Aplicación de Escritorio (Nativo)")
+        ])
+    )
+
+    def aplicar_tema_dinamico(id_tema):
+        tema = diccionario_temas.get(id_tema, diccionario_temas["dark"])
+        
+        page.theme_mode = ft.ThemeMode.DARK if tema["modo"] == "dark" else ft.ThemeMode.LIGHT
+        page.theme = ft.Theme(color_scheme_seed=tema["seed_color"])
+        
+        # Eliminamos el código de asignar grises manualmente porque 
+        # ahora los Text usan color="onSurfaceVariant" nativamente
+        
+        config_app["tema_visual"] = id_tema
+        guardar_config(config_app)
+        page.update()
+
+    opciones_tema = []
+    for id_t, info in diccionario_temas.items():
+        opciones_tema.append(ft.Radio(value=id_t, label=info["nombre"]))
+
+    txt_lbl_tema = ft.Text(t("lbl_tema_visual") if "lbl_tema_visual" in diccionario_textos else "Tema Visual", weight="bold", size=18)
+    radio_tema = ft.RadioGroup(
+        value=config_app.get("tema_visual", "dark"),
+        on_change=lambda e: aplicar_tema_dinamico(radio_tema.value),
+        content=ft.Column(opciones_tema)
+    )
+
     txt_lbl_config_motor = ft.Text(t("lbl_config_motor"), size=20, weight="bold")
-    txt_desc_config_metodo = ft.Text(t("desc_config_metodo"), color="grey400")
+    
+    # Asignación semántica a textos de la configuración
+    txt_desc_config_metodo = ft.Text(t("desc_config_metodo"), color="onSurfaceVariant")
     txt_lbl_rendimiento_busqueda = ft.Text(t("lbl_rendimiento_busqueda"), weight="bold", size=18)
-    txt_desc_tamanio_db = ft.Text(t("desc_tamanio_db"), color="grey400")
-    txt_desc_config_limite = ft.Text(t("desc_config_limite"), color="grey400")
-    btn_guardar_config = ft.ElevatedButton(t("btn_guardar_config"), icon="save")
+    txt_desc_tamanio_db = ft.Text(t("desc_tamanio_db"), color="onSurfaceVariant")
+    txt_desc_config_limite = ft.Text(t("desc_config_limite"), color="onSurfaceVariant")
 
-    contenedor_configuracion = ft.Container(padding=20, content=ft.Column([txt_lbl_config_motor, dropdown_idioma, ft.Divider(), txt_desc_config_metodo, radio_metodo_anio, ft.Divider(), txt_lbl_modo_busqueda, radio_modo_busqueda, ft.Divider(), txt_lbl_rendimiento_busqueda, txt_desc_tamanio_db, dropdown_tamanio_db, ft.Container(height=10)], scroll=ft.ScrollMode.AUTO))
-
-    def aplicar_traduccion_al_vuelo():
-        page.title = t("app_titulo")
-        txt_lbl_indexar_carpetas.value = t("lbl_indexar_carpetas"); txt_lbl_filtro_carpetas.value = t("lbl_filtro_carpetas")
-        btn_todas.text = t("btn_todas"); btn_ninguna.text = t("btn_ninguna"); btn_salir.text = t("btn_salir"); check_desconocidos.label = t("lbl_incluir_sin_ano")
-        btn_indexar.tooltip = t("tooltip_indexar_carpeta"); btn_detener.tooltip = t("tooltip_detener_index"); btn_borrar_indice.tooltip = t("tooltip_borrar_indice"); btn_alternar_vista.tooltip = t("tooltip_ocultar_rutas") if estado_app["mostrar_rutas"] else t("tooltip_mostrar_rutas")
-        txt_busqueda.label = t("lbl_buscar_ejemplo"); btn_buscar.text = t("btn_buscar"); btn_anterior.text = t("btn_anterior"); btn_siguiente.text = t("btn_siguiente"); btn_cargar_mas.text = t("btn_cargar_mas") if "btn_cargar_mas" in diccionario_textos else "Cargar más resultados..."; btn_exportar.text = t("btn_exportar") if "btn_exportar" in diccionario_textos else "Exportar ODS"
-        dlg_borrar.title.value = t("lbl_gestion_indice"); dropdown_borrar.label = t("lbl_que_deseas_borrar"); check_confirmacion.label = t("lbl_accion_irreversible"); btn_confirmar_borrado.text = t("btn_borrar"); btn_cancelar_borrado.text = t("btn_cancelar")
-        txt_lbl_config_motor.value = t("lbl_config_motor")
-        val_idioma = dropdown_idioma.value; val_tamanio = dropdown_tamanio_db.value
-        dropdown_idioma.value = None; dropdown_tamanio_db.value = None
-        page.update() 
-        time.sleep(0.05)
-        dropdown_idioma.label = t("lbl_idioma")
-        dropdown_idioma.options = [ft.dropdown.Option("es", t("lbl_espanol")), ft.dropdown.Option("en", t("lbl_ingles"))]
-        dropdown_tamanio_db.label = t("lbl_tamanio_db")
-        dropdown_tamanio_db.options = [ft.dropdown.Option("500", t("opt_500mb")), ft.dropdown.Option("1024", t("opt_1gb")), ft.dropdown.Option("2048", t("opt_2gb")), ft.dropdown.Option("4096", t("opt_4gb"))]
-        dropdown_idioma.value = val_idioma; dropdown_tamanio_db.value = val_tamanio
-        txt_desc_config_metodo.value = t("desc_config_metodo")
-        radio_metodo_anio.content = ft.Column([ft.Radio(value="nombre_archivo", label=t("opt_metodo_nombre")), ft.Radio(value="carpeta", label=t("opt_metodo_carpeta")), ft.Radio(value="metadatos", label=t("opt_metodo_metadatos"))])
-        txt_lbl_rendimiento_busqueda.value = t("lbl_rendimiento_busqueda"); txt_desc_tamanio_db.value = t("desc_tamanio_db")
-        txt_lbl_modo_busqueda.value = t("lbl_modo_busqueda") if "lbl_modo_busqueda" in diccionario_textos else "Modo de Búsqueda"
-        radio_modo_busqueda.content = ft.Column([ft.Radio(value="relevancia", label=t("opt_modo_relevancia") if "opt_modo_relevancia" in diccionario_textos else "Precisión: Ordenar por relevancia FTS5 (Recomendado)"), ft.Radio(value="rapida", label=t("opt_modo_rapido") if "opt_modo_rapido" in diccionario_textos else "Velocidad: Carga continua por orden de indexación (Instantáneo)")])
-        txt_desc_config_limite.value = t("desc_config_limite"); txt_limite.label = t("lbl_limite_maximo"); btn_guardar_config.text = t("btn_guardar_config")
-        tabs.tabs[2].content = construir_pestana_ayuda(); tabs.tabs[3].content = construir_pestana_acerca_de(); tabs.tabs[4].content = construir_pestana_donar()
-        tabs.tabs[0].text = t("tab_busqueda"); tabs.tabs[1].text = t("tab_config"); tabs.tabs[2].text = t("tab_ayuda"); tabs.tabs[3].text = t("tab_acerca_de"); tabs.tabs[4].text = t("tab_donar")
-        hilo = estado_app["hilo_indexacion"]
-        if not hilo or not hilo.is_alive(): txt_estado_indexacion.value = t("estado_reposo")
-        if estado_busqueda["total_paginas"] == 1: txt_paginacion.value = t("lbl_pagina_1_de_1")
-        else: txt_paginacion.value = t("lbl_paginacion").format(estado_busqueda['pagina_actual'], estado_busqueda['total_paginas'])
-        actualizar_filtros_ui()
-
-    def cambiar_idioma_inmediato(e):
-        idioma_nuevo = dropdown_idioma.value
-        if config_app.get("idioma") != idioma_nuevo:
-            config_app["idioma"] = idioma_nuevo
-            guardar_config(config_app)
-            nonlocal diccionario_textos
-            diccionario_textos = cargar_idioma(idioma_nuevo)
-            aplicar_traduccion_al_vuelo()
-            page.update()
-
-    dropdown_idioma.on_change = cambiar_idioma_inmediato
+    contenedor_configuracion = ft.Container(
+        padding=20, 
+        content=ft.Column([
+            txt_lbl_config_motor, 
+            dropdown_idioma, 
+            ft.Divider(), 
+            txt_desc_config_metodo, 
+            radio_metodo_anio, 
+            ft.Divider(), 
+            txt_lbl_modo_busqueda, 
+            radio_modo_busqueda, 
+            ft.Divider(), 
+            txt_lbl_modo_visual, 
+            radio_modo_visual, 
+            ft.Divider(),
+            txt_lbl_rendimiento_busqueda, 
+            txt_desc_tamanio_db, 
+            dropdown_tamanio_db, 
+            ft.Divider(),
+            txt_lbl_tema,
+            radio_tema,
+            ft.Container(height=10)
+        ], 
+        scroll=ft.ScrollMode.AUTO)
+    )
 
     def crear_paso(numero, titulo, descripcion, icono):
-        return ft.Row([ft.Container(content=ft.Text(str(numero), weight="bold", size=20, color="white"), alignment=ft.alignment.center, width=40, height=40, border_radius=20, bgcolor="blue700"), ft.Column([ft.Row([ft.Icon(icono, size=18, color="blue200"), ft.Text(titulo, weight="bold", size=16)]), ft.Container(content=ft.Text(descripcion, color="grey300"),width=600)], expand=True)], alignment=ft.MainAxisAlignment.START, spacing=15)
+        return ft.Row(
+        [
+            ft.Container(
+                content=ft.Text(str(numero), weight="bold", size=20, color="black"), 
+                alignment=ft.Alignment.CENTER, 
+                width=40, 
+                height=40, 
+                border_radius=20, 
+                bgcolor="primary" 
+            ), 
+            ft.Column(
+                [
+                    ft.Row(
+                        [
+                            ft.Icon(icono, size=18, color="primary"), 
+                            ft.Text(titulo, weight="bold", size=16)
+                        ]
+                    ), 
+                    ft.Container(
+                        content=ft.Text(descripcion, color="onSurfaceVariant"),
+                        width=600
+                    )
+                ], 
+                expand=True
+            )
+        ], 
+        alignment=ft.MainAxisAlignment.START, 
+        spacing=15
+    )
 
     def construir_pestana_ayuda():
-        return ft.Container(padding=30, content=ft.Column([ft.Text(t("help_titulo"), size=24, weight="bold"), ft.Text(t("help_desc"), color="grey400"), ft.Divider(height=30), ft.Text(t("help_pasos_titulo"), weight="bold", size=18), ft.Container(height=10), crear_paso(1, t("help_paso1_tit"), t("help_paso1_desc"), "settings"), ft.Container(height=10), crear_paso(2, t("help_paso2_tit"), t("help_paso2_desc"), "create_new_folder"), ft.Container(height=10), crear_paso(3, t("help_paso3_tit"), t("help_paso3_desc"), "filter_alt"), ft.Container(height=10), crear_paso(4, t("help_paso4_tit"), t("help_paso4_desc"), "search"), ft.Container(height=10), crear_paso(5, t("help_paso5_tit"), t("help_paso5_desc"), "open_in_new"), ft.Divider(height=40), ft.Text(t("help_sintaxis_tit"), weight="bold", size=18), ft.Text(t("help_sintaxis_desc"), color="grey400"), ft.Container(padding=15, bgcolor="grey900", border_radius=5, content=ft.Column([ft.Text(t("help_sintaxis_frase"), size=13), ft.Text(t("help_sintaxis_and"), size=13), ft.Text(t("help_sintaxis_or"), size=13), ft.Text(t("help_sintaxis_not"), size=13)]))], spacing=10, scroll=ft.ScrollMode.AUTO))
+        return ft.Container(
+            padding=30, 
+            content=ft.Column([
+                ft.Text(t("help_titulo"), size=24, weight="bold"), 
+                ft.Text(t("help_desc"), color="onSurfaceVariant"), 
+                ft.Divider(height=30), 
+                ft.Text(t("help_pasos_titulo"), weight="bold", size=18), 
+                ft.Container(height=10), 
+                
+                crear_paso(1, t("help_paso1_tit"), t("help_paso1_desc"), ft.Icons.SETTINGS), 
+                ft.Container(height=10), 
+                crear_paso(2, t("help_paso2_tit"), t("help_paso2_desc"), ft.Icons.CREATE_NEW_FOLDER), 
+                ft.Container(height=10), 
+                crear_paso(3, t("help_paso3_tit"), t("help_paso3_desc"), ft.Icons.FILTER_ALT), 
+                ft.Container(height=10), 
+                crear_paso(4, t("help_paso4_tit"), t("help_paso4_desc"), ft.Icons.SEARCH), 
+                ft.Container(height=10), 
+                crear_paso(5, t("help_paso5_tit"), t("help_paso5_desc"), ft.Icons.OPEN_IN_NEW), 
+                
+                ft.Divider(height=40), 
+                ft.Text(t("help_sintaxis_tit"), weight="bold", size=18), 
+                ft.Text(t("help_sintaxis_desc"), color="onSurfaceVariant"), 
+                
+                ft.Container(
+                    padding=15, 
+                    bgcolor="surfaceVariant", 
+                    border_radius=5, 
+                    content=ft.Column([
+                        ft.Text(t("help_sintaxis_frase"), size=13), 
+                        ft.Text(t("help_sintaxis_and"), size=13), 
+                        ft.Text(t("help_sintaxis_or"), size=13), 
+                        ft.Text(t("help_sintaxis_not"), size=13)
+                    ])
+                )
+            ], spacing=10, scroll=ft.ScrollMode.AUTO)
+        )
 
     def construir_pestana_acerca_de():
-        return ft.Container(padding=40, content=ft.Column([ft.Row([ft.Image(src="icono_che.png", width=120, height=120, fit=ft.ImageFit.CONTAIN)], alignment=ft.MainAxisAlignment.CENTER), ft.Row([ft.Text("Che PDF", size=28, weight="bold")], alignment=ft.MainAxisAlignment.CENTER), ft.Row([ft.Text(t("about_desc"), color="grey400", text_align=ft.TextAlign.CENTER)], alignment=ft.MainAxisAlignment.CENTER), ft.Divider(height=40), ft.Text(t("about_detalles_tit"), weight="bold", size=16), ft.Text(t("about_version").format(VERSION)), ft.Text(t("about_fecha")), ft.Text(t("about_licencia")), ft.Container(height=20), ft.Text(t("about_desarrollo"), italic=True, size=15, color="blue200"), ft.Container(height=10), ft.Row([ft.TextButton(text=t("about_visitar"), icon="open_in_new", url="https://sitiosdememoria.uy")], alignment=ft.MainAxisAlignment.CENTER)]))
+        return ft.Container(
+        padding=40, 
+        content=ft.Column([
+            ft.Row([ft.Image(src="icono_che.png", width=120, height=120, fit=ft.BoxFit.CONTAIN)], alignment=ft.MainAxisAlignment.CENTER), 
+            ft.Row([ft.Text("Che PDF", size=28, weight="bold")], alignment=ft.MainAxisAlignment.CENTER), 
+            ft.Row([ft.Text(t("about_desc"), color="onSurfaceVariant", text_align=ft.TextAlign.CENTER)], alignment=ft.MainAxisAlignment.CENTER), 
+            ft.Divider(height=40), 
+            ft.Text(t("about_detalles_tit"), weight="bold", size=16), 
+            ft.Text(t("about_version").format(VERSION)), 
+            ft.Text(t("about_fecha")), 
+            ft.Text(t("about_licencia")), 
+            ft.Container(height=20), 
+            ft.Text(t("about_desarrollo"), italic=True, size=15, color="primary"), 
+            ft.Container(height=10), 
+            ft.Row([
+                ft.TextButton(
+                    content=ft.Text(t("about_visitar")), 
+                    icon=ft.Icons.OPEN_IN_NEW, 
+                    url="https://sitiosdememoria.uy"
+                )
+            ], alignment=ft.MainAxisAlignment.CENTER)
+        ])
+    )
 
     def construir_pestana_donar():
-        return ft.Container(padding=40, content=ft.Column([ft.Row([ft.Image(src="aportar.png", width=120, height=120, fit=ft.ImageFit.CONTAIN)], alignment=ft.MainAxisAlignment.CENTER), ft.Row([ft.Text(t("donate_tit"), size=28, weight="bold")], alignment=ft.MainAxisAlignment.CENTER), ft.Row([ft.Text(t("donate_desc"), color="grey400", text_align=ft.TextAlign.CENTER, width=600)], alignment=ft.MainAxisAlignment.CENTER), ft.Container(height=30), ft.Row([ft.ElevatedButton(text=t("donate_btn"), icon="two_fingers_up", icon_color="pink400", url="https://ko-fi.com/sitiosdememoriauy", style=ft.ButtonStyle(bgcolor="grey900", color="white", padding=20))], alignment=ft.MainAxisAlignment.CENTER)]))
+        return ft.Container(
+        padding=40, 
+        content=ft.Column([
+            ft.Row([ft.Image(src="aportar.png", width=120, height=120, fit=ft.BoxFit.CONTAIN)], alignment=ft.MainAxisAlignment.CENTER), 
+            ft.Row([ft.Text(t("donate_tit"), size=28, weight="bold")], alignment=ft.MainAxisAlignment.CENTER), 
+            ft.Row([ft.Text(t("donate_desc"), color="onSurfaceVariant", text_align=ft.TextAlign.CENTER, width=600)], alignment=ft.MainAxisAlignment.CENTER), 
+            ft.Container(height=30), 
+            ft.Row([
+                ft.Button(
+                    content=ft.Text(t("donate_btn")), 
+                    icon=ft.Icons.VOLUNTEER_ACTIVISM, 
+                    icon_color="pink400", 
+                    url="https://ko-fi.com/sitiosdememoriauy", 
+                    style=ft.ButtonStyle(
+                        bgcolor="primaryContainer", 
+                        color="onPrimaryContainer", 
+                        padding=20
+                    )
+                )
+            ], alignment=ft.MainAxisAlignment.CENTER)
+        ])
+    )
 
-    def guardar_config_al_cambiar_pestana(e):
+    mi_tab_bar = ft.TabBar(
+        tabs=[
+            ft.Tab(label=t("tab_busqueda"), icon=ft.Icons.SEARCH),
+            ft.Tab(label=t("tab_config"), icon=ft.Icons.SETTINGS),
+            ft.Tab(label=t("tab_ayuda"), icon=ft.Icons.HELP),
+            ft.Tab(label=t("tab_acerca_de"), icon=ft.Icons.INFO),
+            ft.Tab(label=t("tab_donar"), icon=ft.Icons.VOLUNTEER_ACTIVISM)
+        ]
+    )
+
+    mi_tab_bar_view = ft.TabBarView(
+        expand=True,
+        controls=[
+            contenedor_principal,           
+            contenedor_configuracion,       
+            construir_pestana_ayuda(),      
+            construir_pestana_acerca_de(),  
+            construir_pestana_donar()       
+        ]
+    )
+
+    def guardar_config_al_cambiar_pestana(e=None):
         config_app["metodo_anio"] = radio_metodo_anio.value
         config_app["tamanio_max_db"] = int(dropdown_tamanio_db.value)
         config_app["modo_busqueda"] = radio_modo_busqueda.value
-        try: config_app["limite_resultados"] = int(txt_limite.value)
-        except ValueError: config_app["limite_resultados"] = 10000
+        config_app["modo_visualizacion"] = radio_modo_visual.value
+        config_app["idioma"] = dropdown_idioma.value
+        try: 
+            config_app["limite_resultados"] = int(txt_limite.value)
+        except ValueError: 
+            config_app["limite_resultados"] = 10000
         guardar_config(config_app)
 
+    def asignar_texto(obj, valor):
+        if not obj: return
+        try:
+            if hasattr(obj, "label"): obj.label = valor; return
+            if hasattr(obj, "text"): obj.text = valor; return
+            if hasattr(obj, "content") and hasattr(obj.content, "value"): obj.content.value = valor; return
+            if hasattr(obj, "content"): obj.content = ft.Text(valor); return
+            if hasattr(obj, "value"): obj.value = valor; return
+        except Exception: 
+            pass
+
+    def aplicar_traduccion_al_vuelo():
+        try:
+            page.title = t("app_titulo")
+            span_desarrollo.text = t("lbl_un_desarrollo_de")
+            asignar_texto(txt_lbl_indexar_carpetas, t("lbl_indexar_carpetas"))
+            asignar_texto(txt_lbl_filtro_carpetas, t("lbl_filtro_carpetas"))
+            
+            asignar_texto(btn_todas, t("btn_todas"))
+            asignar_texto(btn_ninguna, t("btn_ninguna"))
+            asignar_texto(btn_salir, t("btn_salir"))
+            asignar_texto(btn_buscar, t("btn_buscar"))
+            asignar_texto(btn_anterior, t("btn_anterior"))
+            asignar_texto(btn_siguiente, t("btn_siguiente"))
+            asignar_texto(btn_cargar_mas, t("btn_cargar_mas") if "btn_cargar_mas" in diccionario_textos else "Cargar más resultados...")
+            asignar_texto(btn_exportar, t("btn_exportar") if "btn_exportar" in diccionario_textos else "Exportar ODS")
+            asignar_texto(btn_confirmar_borrado, t("btn_borrar"))
+            asignar_texto(btn_cancelar_borrado, t("btn_cancelar"))
+
+            asignar_texto(check_desconocidos, t("lbl_incluir_sin_ano"))
+            asignar_texto(txt_busqueda, t("lbl_buscar_ejemplo"))
+            asignar_texto(dlg_borrar.title, t("lbl_gestion_indice"))
+            asignar_texto(dropdown_borrar, t("lbl_que_deseas_borrar"))
+            asignar_texto(check_confirmacion, t("lbl_accion_irreversible"))
+            asignar_texto(txt_lbl_config_motor, t("lbl_config_motor"))
+            asignar_texto(txt_desc_config_metodo, t("desc_config_metodo"))
+            asignar_texto(txt_lbl_rendimiento_busqueda, t("lbl_rendimiento_busqueda"))
+            asignar_texto(txt_desc_tamanio_db, t("desc_tamanio_db"))
+            
+            # --- AGREGAR ESTE BLOQUE PARA EL DROPDOWN DE TAMAÑO ---
+            val_tamanio = dropdown_tamanio_db.value
+            dropdown_tamanio_db.label = t("lbl_tamanio_db")
+            dropdown_tamanio_db.options = [
+                ft.dropdown.Option("500", t("opt_500mb")), 
+                ft.dropdown.Option("1024", t("opt_1gb")), 
+                ft.dropdown.Option("2048", t("opt_2gb")), 
+                ft.dropdown.Option("4096", t("opt_4gb"))
+            ]
+            dropdown_tamanio_db.value = val_tamanio
+            # ------------------------------------------------------
+
+            asignar_texto(txt_lbl_modo_busqueda, t("lbl_modo_busqueda") if "lbl_modo_busqueda" in diccionario_textos else "Modo de Búsqueda")
+            asignar_texto(txt_desc_config_limite, t("desc_config_limite"))
+            asignar_texto(txt_limite, t("lbl_limite_maximo"))
+
+            val_idioma = dropdown_idioma.value
+            dropdown_idioma.options = [
+                ft.dropdown.Option("es", t("lbl_espanol")), 
+                ft.dropdown.Option("en", t("lbl_ingles"))
+            ]
+            dropdown_idioma.label = t("lbl_idioma")
+            dropdown_idioma.value = val_idioma
+
+            asignar_texto(radio_metodo_anio.content.controls[0], t("opt_metodo_nombre"))
+            asignar_texto(radio_metodo_anio.content.controls[1], t("opt_metodo_carpeta"))
+            asignar_texto(radio_metodo_anio.content.controls[2], t("opt_metodo_metadatos"))
+            
+            asignar_texto(radio_modo_busqueda.content.controls[0].controls[0], t("opt_modo_relevancia") if "opt_modo_relevancia" in diccionario_textos else "Precisión")
+            asignar_texto(radio_modo_busqueda.content.controls[1], t("opt_modo_rapido") if "opt_modo_rapido" in diccionario_textos else "Velocidad")
+
+            asignar_texto(txt_lbl_modo_visual, t("lbl_modo_visual") if "lbl_modo_visual" in diccionario_textos else "Modo de Visualización (Requiere reiniciar la app)")
+            asignar_texto(radio_modo_visual.content.controls[0], t("opt_visual_web") if "opt_visual_web" in diccionario_textos else "Navegador Web (Seguro / Máxima compatibilidad)")
+            asignar_texto(radio_modo_visual.content.controls[1], t("opt_visual_escritorio") if "opt_visual_escritorio" in diccionario_textos else "Aplicación de Escritorio (Nativo)")
+
+            nombres_tabs = ["tab_busqueda", "tab_config", "tab_ayuda", "tab_acerca_de", "tab_donar"]
+            for i, tab_key in enumerate(nombres_tabs):
+                asignar_texto(mi_tab_bar.tabs[i], t(tab_key))
+            
+            mi_tab_bar_view.controls[2] = construir_pestana_ayuda()
+            mi_tab_bar_view.controls[3] = construir_pestana_acerca_de()
+            mi_tab_bar_view.controls[4] = construir_pestana_donar()
+            
+            hilo = estado_app["hilo_indexacion"]
+            if not hilo or not hilo.is_alive(): 
+                asignar_texto(txt_estado_indexacion, t("estado_reposo"))
+                
+            mi_tab_bar.update()
+            mi_tab_bar_view.update()
+            page.update()
+            actualizar_filtros_ui()
+        except Exception:
+            pass
+           
     tabs = ft.Tabs(
-        selected_index=0, animation_duration=300, on_change=guardar_config_al_cambiar_pestana, 
-        tabs=[
-            ft.Tab(text=t("tab_busqueda"), icon="search", content=contenedor_principal),
-            ft.Tab(text=t("tab_config"), icon="settings", content=contenedor_configuracion),
-            ft.Tab(text=t("tab_ayuda"), icon="help", content=construir_pestana_ayuda()),
-            ft.Tab(text=t("tab_acerca_de"), icon="info", content=construir_pestana_acerca_de()),
-            ft.Tab(text=t("tab_donar"), icon="volunteer_activism", content=construir_pestana_donar())
-        ], expand=1
+        length=5,
+        selected_index=0, 
+        expand=True,
+        on_change=guardar_config_al_cambiar_pestana,
+        content=ft.Column(
+            expand=True,
+            controls=[
+                mi_tab_bar,
+                mi_tab_bar_view
+            ]
+        )
     )
 
     page.add(encabezado, ft.Divider(), tabs)
 
 if __name__ == '__main__':
+    import multiprocessing
     multiprocessing.freeze_support()
-    if getattr(sys, 'frozen', False): ruta_base_real = os.path.dirname(sys.executable)
-    else: ruta_base_real = os.path.dirname(os.path.abspath(__file__))
+    import sys
+    import os
+
+    if getattr(sys, 'frozen', False): 
+        ruta_base_real = os.path.dirname(sys.executable)
+    else: 
+        ruta_base_real = os.path.dirname(os.path.abspath(__file__))
+        
     ruta_assets_absoluta = os.path.join(ruta_base_real, "_internal", "assets")
-    ft.app(target=main, assets_dir=ruta_assets_absoluta)
+
+    archivo_log = os.path.join(ruta_base_real, "crash_log.txt")
+    if sys.platform == "win32":
+        if sys.stdout is None:
+            sys.stdout = open(archivo_log, "w", encoding="utf-8")
+        if sys.stderr is None:
+            sys.stderr = open(archivo_log, "a", encoding="utf-8")
+            
+        import atexit
+        def destruir_log_vacio():
+            try:
+                if os.path.exists(archivo_log) and os.path.getsize(archivo_log) == 0:
+                    os.remove(archivo_log)
+            except Exception:
+                pass
+        
+        atexit.register(destruir_log_vacio)
+
+    modo_arranque = "web"
+    CONFIG_FILE = os.path.join(ruta_base_real, "config.json") 
+    try:
+        if os.path.exists(CONFIG_FILE):
+            import json
+            with open(CONFIG_FILE, 'r', encoding='utf-8') as f: 
+                conf_previa = json.load(f)
+                modo_arranque = conf_previa.get("modo_visualizacion", "web")
+    except Exception:
+        pass
+
+    import flet as ft
+    if modo_arranque == "escritorio":
+        ft.run(main, assets_dir=ruta_assets_absoluta)
+    else:
+        # Le indicamos que solo escuche conexiones locales
+        ft.run(main, view=ft.AppView.WEB_BROWSER, assets_dir=ruta_assets_absoluta, host="127.0.0.1")
