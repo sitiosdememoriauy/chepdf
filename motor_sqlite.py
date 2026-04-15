@@ -260,7 +260,8 @@ def indexar_documentos(carpeta_pdfs, metodo_anio="nombre_archivo", tamanio_max_m
     conexion.commit()
 
     total_pdfs = sum(1 for raiz, _, archivos in os.walk(carpeta_pdfs) for a in archivos if a.lower().endswith('.pdf'))
-    archivos_procesados, lote_size = 50, 50 
+    archivos_procesados = 0
+    lote_size = 50
     archivos_nuevos_en_lote = 0
     ruta_carpeta_actual_en_proceso = ""
     archivos_en_subcarpeta_actual = 0
