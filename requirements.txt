@@ -1,4 +1,8 @@
-flet==0.28.3
+flet
+flet-cli
+flet-web
+flet-desktop
 PyMuPDF
 pyinstaller
 odfpy
+certifi
