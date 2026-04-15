@@ -3,6 +3,7 @@ import shutil
 import os
 import platform
 import sys
+import flet_web
 
 print("Iniciando compilación de Che PDF usando Flet Pack...")
 
@@ -32,10 +33,27 @@ ejecutable_flet = os.path.join(os.path.dirname(sys.executable), "flet.exe" if pl
 if not os.path.exists(ejecutable_flet):
     ejecutable_flet = "flet"
 
+# --- RECUPERAMOS LA INYECCIÓN DE ASSETS ---
+# Buscamos físicamente la carpeta 'web' dentro del paquete flet_web que instalaste
+ruta_flet_web = os.path.dirname(flet_web.__file__)
+ruta_web_assets = os.path.join(ruta_flet_web, "web")
+
+# PyInstaller usa ";" en Windows y ":" en Linux/Mac para separar origen de destino
+separador = ";" if platform.system() == "Windows" else ":"
+param_add_data_web = f"{ruta_web_assets}{separador}flet_web/web"
+
 comando_flet = [
     ejecutable_flet, "pack", "app.py",
     "--name", "Che PDF",
-    "--icon", "_internal/assets/icono_che.ico"
+    "--icon", "_internal/assets/icono_che.ico",
+    
+    # --- LIBRERÍAS OCULTAS ---
+    "--hidden-import", "sqlite3", 
+    "--hidden-import", "fitz",
+    "--hidden-import", "flet_web",
+    
+    # --- INYECCIÓN DEL MOTOR WEB ---
+    "--add-data", param_add_data_web  # <-- Le decimos a PyInstaller que guarde los HTML/JS aquí
 ]
 
 try:
@@ -84,6 +102,11 @@ for archivo in archivos_en_raiz:
     if archivo.lower().startswith('readme') and archivo.lower().endswith('.md'):
         print(f"    - Copiando {archivo}...")
         shutil.copy(archivo, ruta_dist)
+
+if os.path.exists('themes.json'):
+    print(" -> Copiando archivo de temas visuales...")
+    shutil.copy('themes.json', ruta_dist)
+# -----------------------------------------------
 
 # 5. Copiamos los recursos gráficos (imágenes y logos)
 ruta_assets_origen = 'assets' if os.path.exists('assets') else os.path.join('_internal', 'assets')
