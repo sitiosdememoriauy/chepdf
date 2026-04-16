@@ -602,31 +602,34 @@ def main(page: ft.Page):
     contenedor_cargar_mas = ft.Row([btn_cargar_mas], alignment=ft.MainAxisAlignment.CENTER, visible=False)
 
     def abrir_pdf(ruta_guardada, pagina, termino_busqueda=""):
-        if not os.path.isabs(ruta_guardada): ruta_real = os.path.join(motor_sqlite.BASE_DIR, ruta_guardada)
-        else: ruta_real = ruta_guardada
+        # 1. Construir la ruta real del archivo
+        if not os.path.isabs(ruta_guardada): 
+            ruta_real = os.path.join(motor_sqlite.BASE_DIR, ruta_guardada)
+        else: 
+            ruta_real = ruta_guardada
+            
         try:
+            # 2. Verificar que el archivo no haya sido movido o borrado del disco duro
+            if not os.path.exists(ruta_real):
+                txt_estado_busqueda.value = "Error: El archivo ya no existe en esa ruta. Te sugiero reindexar la carpeta."
+                txt_estado_busqueda.color = "error"
+                page.update()
+                return
+
+            # 3. Construir la URL con los parámetros de página y búsqueda
             url_base = pathlib.Path(ruta_real).as_uri()
-            if termino_busqueda: url_final = f"{url_base}#page={pagina}&search={urllib.parse.quote(termino_busqueda)}"
-            else: url_final = f"{url_base}#page={pagina}"
+            if termino_busqueda: 
+                url_final = f"{url_base}#page={pagina}&search={urllib.parse.quote(termino_busqueda)}"
+            else: 
+                url_final = f"{url_base}#page={pagina}"
             
-            temp_dir = tempfile.gettempdir()
-            html_path = os.path.join(temp_dir, "puente_visor_forense.html")
-            texto_abriendo = t("msg_abriendo_html").format(pagina)
+            # 4. SOLUCIÓN: Usar Python para ordenarle al Sistema Operativo que abra el PDF
+            # Esto sortea el bloqueo de seguridad del frontend
+            webbrowser.open(url_final)
             
-            # --- TEMA DINÁMICO PARA EL HTML PUENTE ---
-            bg_color = "#ffffff" if page.theme_mode == ft.ThemeMode.LIGHT else "#1e1e1e"
-            txt_color = "#1e1e1e" if page.theme_mode == ft.ThemeMode.LIGHT else "#ffffff"
-            
-            with open(html_path, "w", encoding="utf-8") as f:
-                f.write(f'''<!DOCTYPE html><html><head><meta http-equiv="refresh" content="0; url={url_final}"></head>
-                <body style="background-color: {bg_color}; color: {txt_color}; display: flex; justify-content: center; align-items: center; height: 100vh;">
-                    <h2>{texto_abriendo}</h2>
-                    <script>window.focus();</script>
-                </body></html>''')
-            
-            page.launch_url(pathlib.Path(html_path).as_uri())
         except Exception as ex:
             txt_estado_busqueda.value = t("msg_error_abrir").format(ex)
+            txt_estado_busqueda.color = "error"
             page.update()
 
     def cambiar_pagina(delta):
