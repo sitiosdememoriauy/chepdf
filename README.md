@@ -18,9 +18,11 @@ Esta aplicación fue desarrollada por **sitiosdememoria.uy** con el objetivo de 
 ## 🛠️ Requisitos del Sistema y Tecnologías
 
 El código fuente está escrito en **Python 3**. Las dependencias principales son:
-* `flet==0.28.3` (Nota: Se utiliza esta versión específica y estable de la arquitectura original para garantizar la compatibilidad de hardware y evitar *bugs* de parpadeo de pantalla presentes en versiones posteriores).
+* `flet`
 * `PyMuPDF` (fitz) para el procesamiento de documentos.
 * `sqlite3` (nativo en Python).
+* `odfpy`
+* `certifi`
 
 ## 🚀 Instalación y Ejecución desde el Código Fuente
 
