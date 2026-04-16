@@ -1,5 +1,6 @@
 VERSION = "1.7"
 
+import webbrowser
 import flet as ft
 import motor_sqlite
 import os
