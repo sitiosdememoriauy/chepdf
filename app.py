@@ -1,4 +1,4 @@
-VERSION = "1.7"
+VERSION = "1.7.1"
 
 import webbrowser
 import flet as ft
