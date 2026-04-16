@@ -18,9 +18,11 @@ This application was developed by **sitiosdememoria.uy** with the aim of facilit
 ## 🛠️ System Requirements and Technologies
 
 The source code is written in **Python 3**. The main dependencies are:
-* `flet==0.28.3` (Note: This specific and stable version of the original architecture is used to ensure hardware compatibility and avoid screen flickering bugs present in later versions).
+* `flet`
 * `PyMuPDF` (fitz) for document processing.
-* `sqlite3` (native to Python).
+* `sqlite3` (native to Pyth
+* `odfpy`
+* `certifi`
 
 ## 🚀 Installation and Execution from Source Code
 
@@ -104,6 +106,26 @@ If you find the tool useful, please consider making a solidarity contribution:
 This project is licensed under the **GNU GPLv3** License. You are free to use, study, share, and modify this software for any purpose, as long as derivative works maintain the same open license.
 
 ## Version History
+
+### v1.7 (April 2026)
+* **Flet Update:**  Major software update, transitioning from Flet 0.28.3 to Flet 0.84.0.
+* **Web and Desktop Modes:**  Enabled execution mode selection between a standalone desktop application and a web option (the latter added to avoid known crashes in Flet 0.84.0).
+* **Visual Themes Implementation:**  Added a selector in the settings to choose the visual theme (light, dark, terminal), which is customizable by adding values to themes.json.
+
+### v1.6 (April 2026)
+* **Time Slider:**  Time slider debugging.
+
+### v1.5 (April 2026)
+* **Pause Searches:**  Various performance adjustments, added a pause button for searches, and implemented a kill switch.
+* **Folder Search Improvement:**  Fixed folder search; now only the .db files that contain them are opened.
+
+### v1.4 (April 2026)
+* **Export:**  Created a mechanism to export results to .ods format.
+* **Faster Searches:**  Removed the use of LIKE queries, which were causing delays during large searches.
+
+### v1.3 (April 2026)
+* **Multi-threading Stability (Anti-Fork Bomb):**  Transitioned to Flet's pure asynchronous engine and implemented multiprocessing shields (freeze_support), eradicating the infinite window cloning issue when running the binary on Windows.
+* **Smart Portable Distribution:**  New compilation engine that automatically packages the executable, languages, and visual resources into a single master folder (Che_PDF_Portable) ready for distribution.
 
 ### v1.2 (April 2026)
 * **Dual Search Engine:** Configurable option to toggle between "Precision Mode" (FTS5 algorithmic ranking) and "Speed Mode" (instant sequential extraction).
